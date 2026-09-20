@@ -1,0 +1,33 @@
+{
+  "name": "claude-openrouter",
+  "version": "0.1.0",
+  "description": "Claude Code'a dokunmadan, OpenRouter uzerindeki istedigin modelleri /model menusune ekleyen yerel proxy",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "cor": "./dist/cli/index.js",
+    "claude-openrouter": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
