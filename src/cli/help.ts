@@ -15,9 +15,18 @@ Kurulum
                              tool cagrisini duz metin yaziyor; proxy bunu kendisi
                              de fark edip kalici olarak kapatir
       --stream               akisi acik tut
+      --reasoning <seviye>   OpenRouter reasoning effort: none, low, medium, high, max.
+                             Ayarlanmazsa saglayicinin varsayilani gecerli olur;
+                             fark buyuk olabilir
+      --cheapest             Her istekte en ucuz saglayiciyi sec
+      --sort <olcut>         price (= --cheapest), throughput veya latency
+      --max-price-in <usd>   Milyon girdi tokeni icin ust sinir
+      --max-price-out <usd>  Milyon cikti tokeni icin ust sinir
+      --quantizations <liste>  Kabul edilen kuantizasyonlar, virgulle (ornek: fp8,bf16)
   remove <model-id>        Modeli listeden cikar
   list                     Ekli modelleri goster
   search <kelime>          OpenRouter katalogunda model ara
+  providers <model-id>     Modeli sunan saglayicilari ve fiyatlarini listele
 
 Claude Code ile birlestirme
   sync                     Modelleri ~/.claude/settings.json icindeki modelPicker'a yaz

@@ -258,6 +258,49 @@ describe("anthropicToOpenAI", () => {
     expect(result.stream_options).toBeUndefined();
   });
 
+  it("sends the configured reasoning effort", () => {
+    const result = anthropicToOpenAI(build(), { id: "deepseek/x", reasoning: "max" });
+    expect(result.reasoning).toEqual({ effort: "max" });
+  });
+
+  it("sends no reasoning field when none is configured", () => {
+    expect(anthropicToOpenAI(build(), entry).reasoning).toBeUndefined();
+  });
+
+  it("still drops Anthropic's own thinking field when reasoning is set", () => {
+    const result = anthropicToOpenAI(
+      build({ thinking: { type: "enabled", budget_tokens: 5000 } }),
+      { id: "deepseek/x", reasoning: "high" },
+    ) as unknown as Record<string, unknown>;
+
+    expect(result.thinking).toBeUndefined();
+    expect(result.reasoning).toEqual({ effort: "high" });
+  });
+
+  it("asks OpenRouter for the cheapest provider", () => {
+    const result = anthropicToOpenAI(build(), { id: "deepseek/x", providerSort: "price" });
+    expect(result.provider).toEqual({ sort: "price" });
+  });
+
+  it("passes a price ceiling and quantization filter through", () => {
+    const result = anthropicToOpenAI(build(), {
+      id: "deepseek/x",
+      providerSort: "price",
+      maxPrice: { prompt: 0.1, completion: 0.3 },
+      quantizations: ["fp8", "bf16"],
+    });
+
+    expect(result.provider).toEqual({
+      sort: "price",
+      max_price: { prompt: 0.1, completion: 0.3 },
+      quantizations: ["fp8", "bf16"],
+    });
+  });
+
+  it("sends no provider field when routing is not configured", () => {
+    expect(anthropicToOpenAI(build(), entry).provider).toBeUndefined();
+  });
+
   it("sends the OpenRouter id, not the id Claude Code asked for", () => {
     const result = anthropicToOpenAI(build({ model: "openai/gpt-5[1m]" }), entry);
     expect(result.model).toBe("openai/gpt-5");

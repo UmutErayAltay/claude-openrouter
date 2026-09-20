@@ -47,6 +47,18 @@ export function anthropicToOpenAI(
     out.stream_options = { include_usage: true };
   }
 
+  // Anthropic's own thinking/effort fields are dropped above; this is the
+  // OpenRouter equivalent, and it changes the model's answer quality a lot.
+  if (entry.reasoning) out.reasoning = { effort: entry.reasoning };
+
+  // allow_fallbacks is left at its default: the cheapest provider is tried
+  // first, and a second choice steps in when it is down.
+  const provider: NonNullable<OpenAIRequest["provider"]> = {};
+  if (entry.providerSort) provider.sort = entry.providerSort;
+  if (entry.maxPrice) provider.max_price = entry.maxPrice;
+  if (entry.quantizations?.length) provider.quantizations = entry.quantizations;
+  if (Object.keys(provider).length > 0) out.provider = provider;
+
   if (request.tools?.length) {
     const tools = request.tools
       // Server-side tools (web_search, computer, …) have no input_schema and

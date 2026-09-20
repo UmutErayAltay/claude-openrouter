@@ -138,6 +138,12 @@ export interface OpenAIRequest {
     function: { name: string; description?: string; parameters: Record<string, unknown> };
   }[];
   tool_choice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
+  reasoning?: { effort: string };
+  provider?: {
+    sort?: string;
+    max_price?: { prompt?: number; completion?: number };
+    quantizations?: string[];
+  };
 }
 
 export interface OpenAIUsage {

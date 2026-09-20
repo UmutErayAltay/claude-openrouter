@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  isProviderSort,
+  isReasoningEffort,
   configPath,
   findModel,
   loadConfig,
@@ -82,5 +84,24 @@ describe("findModel", () => {
     const config = { ...DEFAULT_CONFIG, models: [{ id: "openai/gpt-5" }] };
     expect(findModel(config, "openai/gpt-5")).toEqual({ id: "openai/gpt-5" });
     expect(findModel(config, "openai/gpt-4o")).toBeUndefined();
+  });
+});
+
+describe("isReasoningEffort", () => {
+  it("accepts the values OpenRouter takes and rejects the rest", () => {
+    for (const value of ["none", "low", "medium", "high", "max"]) {
+      expect(isReasoningEffort(value)).toBe(true);
+    }
+    expect(isReasoningEffort("xhigh")).toBe(false);
+    expect(isReasoningEffort("")).toBe(false);
+  });
+});
+
+describe("isProviderSort", () => {
+  it("accepts the sort keys OpenRouter takes", () => {
+    for (const value of ["price", "throughput", "latency"]) {
+      expect(isProviderSort(value)).toBe(true);
+    }
+    expect(isProviderSort("cheapest")).toBe(false);
   });
 });

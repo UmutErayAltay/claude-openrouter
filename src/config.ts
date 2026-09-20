@@ -9,6 +9,22 @@ import {
   writeFileSync,
 } from "node:fs";
 
+export const PROVIDER_SORTS = ["price", "throughput", "latency"] as const;
+
+export type ProviderSort = (typeof PROVIDER_SORTS)[number];
+
+export function isProviderSort(value: string): value is ProviderSort {
+  return (PROVIDER_SORTS as readonly string[]).includes(value);
+}
+
+export const REASONING_EFFORTS = ["none", "low", "medium", "high", "max"] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export function isReasoningEffort(value: string): value is ReasoningEffort {
+  return (REASONING_EFFORTS as readonly string[]).includes(value);
+}
+
 /** A model served through OpenRouter that the user added to the picker. */
 export interface ModelEntry {
   /** OpenRouter model id, e.g. "openai/gpt-5". Sent verbatim to OpenRouter. */
@@ -21,6 +37,26 @@ export interface ModelEntry {
   contextTokens?: number;
   /** Cap for max_tokens, in case Claude Code asks for more than the model allows. */
   maxOutputTokens?: number;
+  /**
+   * How OpenRouter picks among the providers serving this model. "price"
+   * takes the cheapest first. The spread is large: DeepSeek V4 Flash is
+   * served by 27 providers between $0.040 and $0.440 per million input
+   * tokens. Fallbacks stay on, so a cheap provider being down costs nothing.
+   */
+  providerSort?: ProviderSort;
+  /** Hard ceiling in dollars per million tokens; pricier providers are skipped. */
+  maxPrice?: { prompt?: number; completion?: number };
+  /**
+   * Quantization levels to accept. The cheapest providers sometimes serve
+   * heavily quantized weights, which costs code quality.
+   */
+  quantizations?: string[];
+  /**
+   * OpenRouter reasoning effort. It is worth a lot: DeepSeek reports V4-Flash
+   * at 55.2 on LiveCodeBench with thinking off and 91.6 at max effort. Without
+   * it the provider's default decides, so it is set explicitly per model.
+   */
+  reasoning?: ReasoningEffort;
   /**
    * false makes the proxy call OpenRouter without streaming and produce the
    * Anthropic event stream itself. Some providers emit tool calls as plain

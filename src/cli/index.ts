@@ -4,6 +4,8 @@ import { existsSync } from "node:fs";
 import {
   configPath,
   findModel,
+  isProviderSort,
+  isReasoningEffort,
   loadConfig,
   logPath,
   resolveOpenRouterKey,
@@ -17,7 +19,12 @@ import {
   revertModelPicker,
   syncModelPicker,
 } from "../claudeSettings.js";
-import { fetchCatalog, searchCatalog, shortDescription } from "../openrouterCatalog.js";
+import {
+  fetchCatalog,
+  fetchEndpoints,
+  searchCatalog,
+  shortDescription,
+} from "../openrouterCatalog.js";
 import { isPortAnswering, isRunning, readPid, startProxy, stopProxy } from "../proxyProcess.js";
 import { writeAgent } from "../agentTemplate.js";
 import { HELP } from "./help.js";
@@ -54,6 +61,8 @@ async function main(argv: string[]): Promise<number> {
       return commandDoctor();
     case "agent":
       return commandAgent(rest);
+    case "providers":
+      return commandProviders(rest);
     case "claude":
       return commandClaude(rest);
     default:
@@ -87,6 +96,12 @@ async function commandAdd(args: string[]): Promise<number> {
       "behaves-as": { type: "string" },
       "no-stream": { type: "boolean" },
       stream: { type: "boolean" },
+      reasoning: { type: "string" },
+      cheapest: { type: "boolean" },
+      sort: { type: "string" },
+      "max-price-in": { type: "string" },
+      "max-price-out": { type: "string" },
+      quantizations: { type: "string" },
     },
   });
 
@@ -110,6 +125,35 @@ async function commandAdd(args: string[]): Promise<number> {
   if (values["behaves-as"]) entry.behavesAs = values["behaves-as"];
   if (values["no-stream"]) entry.stream = false;
   if (values.stream) entry.stream = true;
+  if (values.reasoning) {
+    if (!isReasoningEffort(values.reasoning)) {
+      process.stderr.write(
+        `Gecersiz --reasoning degeri: ${values.reasoning}. none, low, medium, high veya max.\n`,
+      );
+      return 1;
+    }
+    entry.reasoning = values.reasoning;
+  }
+
+  if (values.cheapest) entry.providerSort = "price";
+  if (values.sort) {
+    if (!isProviderSort(values.sort)) {
+      process.stderr.write(
+        `Gecersiz --sort degeri: ${values.sort}. price, throughput veya latency.\n`,
+      );
+      return 1;
+    }
+    entry.providerSort = values.sort;
+  }
+  if (values["max-price-in"] || values["max-price-out"]) {
+    entry.maxPrice = {
+      ...(values["max-price-in"] ? { prompt: Number(values["max-price-in"]) } : {}),
+      ...(values["max-price-out"] ? { completion: Number(values["max-price-out"]) } : {}),
+    };
+  }
+  if (values.quantizations) {
+    entry.quantizations = values.quantizations.split(",").map((q) => q.trim()).filter(Boolean);
+  }
 
   // Fill the gaps from the OpenRouter catalog so the picker row and the
   // context estimate are right without the user looking anything up.
@@ -135,6 +179,46 @@ async function commandAdd(args: string[]): Promise<number> {
 
   process.stdout.write(`Eklendi: ${entry.label ?? entry.id} (${entry.id})\n`);
   process.stdout.write("Simdi 'cor sync' calistirip /model menusune yansit.\n");
+  return 0;
+}
+
+async function commandProviders(args: string[]): Promise<number> {
+  const config = loadConfig();
+  const id = args[0] ?? config.models[0]?.id;
+  if (!id) {
+    process.stderr.write("Kullanim: cor providers <model-id>\n");
+    return 1;
+  }
+
+  const endpoints = await fetchEndpoints(config, id);
+  if (endpoints.length === 0) {
+    process.stdout.write(`${id} icin saglayici bulunamadi.\n`);
+    return 1;
+  }
+
+  process.stdout.write(`${id} - ${endpoints.length} saglayici (ucuzdan pahaliya)\n\n`);
+  process.stdout.write(
+    `${"saglayici".padEnd(24)}${"girdi $/M".padStart(11)}${"cikti $/M".padStart(11)}` +
+      `${"kuantizasyon".padStart(14)}${"baglam".padStart(12)}\n`,
+  );
+  for (const endpoint of endpoints) {
+    process.stdout.write(
+      endpoint.providerName.padEnd(24) +
+        endpoint.promptPrice.toFixed(3).padStart(11) +
+        endpoint.completionPrice.toFixed(3).padStart(11) +
+        (endpoint.quantization ?? "-").padStart(14) +
+        (endpoint.contextLength ?? 0).toLocaleString("tr-TR").padStart(12) +
+        "\n",
+    );
+  }
+
+  const cheapest = endpoints[0];
+  const dearest = endpoints[endpoints.length - 1];
+  if (cheapest && dearest && cheapest.promptPrice > 0) {
+    const ratio = dearest.promptPrice / cheapest.promptPrice;
+    process.stdout.write(`\nEn pahali, en ucuzun ${ratio.toFixed(1)} kati.\n`);
+    process.stdout.write("Hep en ucuzu icin: cor add <model-id> --cheapest\n");
+  }
   return 0;
 }
 
@@ -205,7 +289,10 @@ function commandList(): number {
   }
   for (const model of config.models) {
     const context = model.contextTokens ? `, ${model.contextTokens.toLocaleString("tr-TR")} token` : "";
-    process.stdout.write(`${model.id}\n  ${model.label ?? model.id}${context}\n`);
+    const reasoning = model.reasoning ? `, reasoning: ${model.reasoning}` : "";
+    const sort = model.providerSort ? `, saglayici: ${model.providerSort}` : "";
+    const stream = model.stream === false ? ", akissiz" : "";
+    process.stdout.write(`${model.id}\n  ${model.label ?? model.id}${context}${reasoning}${sort}${stream}\n`);
   }
   return 0;
 }

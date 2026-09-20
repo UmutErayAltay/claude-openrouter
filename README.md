@@ -76,6 +76,7 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 | `cor remove <model-id>` | Modeli çıkar |
 | `cor list` | Ekli modelleri göster |
 | `cor search <kelime>` | OpenRouter kataloğunda ara |
+| `cor providers <model-id>` | Modeli sunan sağlayıcıları ve fiyatlarını listele |
 | `cor sync` | Modelleri `~/.claude/settings.json` içindeki `modelPicker`'a yaz |
 | `cor sync --revert` | Son `sync` öncesi haline döndür |
 | `cor start` / `stop` / `status` | Proxy'yi yönet |
@@ -95,6 +96,10 @@ cor add openai/gpt-5 \
   --no-stream
 ```
 
+`--reasoning` modelin düşünme seviyesini belirler ve **etkisi büyüktür**: DeepSeek kendi kartında V4-Flash'i düşünme kapalıyken LiveCodeBench'te 55.2, `max`'ta 91.6 gösteriyor. Ayarlanmazsa sağlayıcının varsayılanı geçerli olur. Ölçtüğümüz kadarıyla **`high` doğru seçim** — `max` aynı cevap için ~7 kat fazla token yakıyor ve Claude Code'un normal `max_tokens` bütçesinde düşünürken bütçeyi bitirip boş cevap dönebiliyor.
+
+`--cheapest` her istekte en ucuz sağlayıcıyı seçtirir (`provider: {sort: "price"}`). Yedeklemeler açık kalır, yani en ucuz sağlayıcı kapalıysa sıradaki devreye girer. Ayrıntı için aşağıdaki bölüm.
+
 `--no-stream` OpenRouter'a akışsız sorar; bazı modeller akış modunda tool çağrısını bozuk üretir. Proxy bunu kendisi de fark edip kalıcı olarak kapatır, `--stream` ile açık tutabilirsin.
 
 `--behaves-as` isteğe bağlıdır: Claude Code'un "bu model bu sürümün model kataloğunda yok" uyarısını susturur. Verdiğin Claude modelinin yeteneklerini varsayar; proxy Anthropic'e özgü alanları zaten temizlediği için istek bozulmaz.
@@ -105,7 +110,7 @@ Pahalı modeli düşünmeye, ucuz modeli yazmaya ayırmak istiyorsan: Claude Cod
 
 ```bash
 cor agent                      # ekli ilk modeli kullanir
-cor agent qwen/qwen3-coder-30b-a3b-instruct --name kodcu
+cor agent deepseek/deepseek-v4-flash-0731 --name kodcu
 ```
 
 `.claude/agents/dosya-kodcu.md` dosyasını oluşturur:
@@ -160,6 +165,47 @@ Proxy Anthropic Messages API'si ile OpenAI uyumlu chat-completions arasında çe
 
 Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `context_management`. Claude Code tanımadığı bir model ID'sine Anthropic'in tüm özelliklerini gönderdiği için bunların ayıklanması şart.
 
+## Sağlayıcı seçimi ve en ucuza yönlendirme
+
+OpenRouter'da aynı modeli birden çok sağlayıcı sunar ve fiyatlar ciddi şekilde ayrışır. DeepSeek V4 Flash'i ölçtüğümüzde **27 sağlayıcı, $0.040 ile $0.440 arası — 11 kat fark**:
+
+```bash
+cor providers deepseek/deepseek-v4-flash-0731
+```
+
+```
+saglayici                 girdi $/M  cikti $/M  kuantizasyon      baglam
+Relace                        0.040      0.120           fp4   1.048.576
+StreamLake                    0.044      0.132           fp8   1.024.000
+Baidu                         0.048      0.144           fp8   1.048.576
+DeepInfra                     0.060      0.180           fp8   1.048.576
+...
+Cloudflare                    0.440      1.320           fp8   1.310.720
+```
+
+Hep en ucuzu için:
+
+```bash
+cor add <model-id> --cheapest
+```
+
+**Ama kuantizasyon sütununa dikkat.** Yukarıda en ucuz sağlayıcı (Relace) `fp4` sunuyor — 4 bit sıkıştırılmış ağırlıklar. Ucuz ama kod kalitesini düşürebilir. Bir üstteki `fp8` sağlayıcı sadece %10 daha pahalı. Sıkıştırmayı sınırlamak için:
+
+```bash
+cor add <model-id> --cheapest --quantizations fp8,bf16,fp16
+```
+
+Canlı testte doğruladık: filtresiz `--cheapest` Relace'e (fp4) gidiyor, filtreyle StreamLake'e (en ucuz fp8) gidiyor.
+
+Diğer seçenekler:
+
+| Seçenek | İş |
+|---|---|
+| `--sort throughput` | En hızlı sağlayıcı |
+| `--sort latency` | En düşük gecikme |
+| `--max-price-in <usd>` | Milyon girdi tokeni için sert üst sınır |
+| `--max-price-out <usd>` | Milyon çıktı tokeni için sert üst sınır |
+
 ## Metin hâlinde tool çağrısı kurtarma
 
 Bazı modeller — Qwen3 Coder bunu gerçek bir Claude Code oturumunda sık yapıyor — tool çağrısını OpenAI'nin `tool_calls` kanalı yerine **düz metin olarak** yazar:
@@ -194,7 +240,7 @@ Hem Qwen/Hermes XML biçimi hem de `<tool_call>{"name":...,"arguments":{...}}</t
 ## Geliştirme
 
 ```bash
-npm test          # 92 birim + uctan uca test
+npm test          # 100 birim + uctan uca test
 npm run typecheck
 npm run build
 ```
