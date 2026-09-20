@@ -19,6 +19,7 @@ import {
 } from "../claudeSettings.js";
 import { fetchCatalog, searchCatalog, shortDescription } from "../openrouterCatalog.js";
 import { isPortAnswering, isRunning, readPid, startProxy, stopProxy } from "../proxyProcess.js";
+import { writeAgent } from "../agentTemplate.js";
 import { HELP } from "./help.js";
 
 async function main(argv: string[]): Promise<number> {
@@ -51,6 +52,8 @@ async function main(argv: string[]): Promise<number> {
       return commandStatus();
     case "doctor":
       return commandDoctor();
+    case "agent":
+      return commandAgent(rest);
     case "claude":
       return commandClaude(rest);
     default:
@@ -132,6 +135,47 @@ async function commandAdd(args: string[]): Promise<number> {
 
   process.stdout.write(`Eklendi: ${entry.label ?? entry.id} (${entry.id})\n`);
   process.stdout.write("Simdi 'cor sync' calistirip /model menusune yansit.\n");
+  return 0;
+}
+
+function commandAgent(args: string[]): number {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      name: { type: "string" },
+      scope: { type: "string" },
+    },
+  });
+
+  const config = loadConfig();
+  const id = positionals[0] ?? config.models[0]?.id;
+  if (!id) {
+    process.stderr.write(
+      "Once bir model ekle: cor add <model-id>\nKullanim: cor agent [model-id] [--name <ad>] [--scope project|user]\n",
+    );
+    return 1;
+  }
+
+  const entry = findModel(config, id);
+  if (!entry) {
+    process.stderr.write(`${id} ekli degil. Once 'cor add ${id}' calistir.\n`);
+    return 1;
+  }
+
+  const scope = values.scope === "user" ? "user" : "project";
+  const { path, overwritten } = writeAgent({
+    name: values.name ?? "dosya-kodcu",
+    modelId: entry.id,
+    scope,
+    label: entry.label,
+  });
+
+  process.stdout.write(`${overwritten ? "Guncellendi" : "Olusturuldu"}: ${path}\n`);
+  process.stdout.write(
+    "Claude Code'da Opus ile plan yap, sonra uygulamayi bu alt ajana ver:\n" +
+      `  "<plan> - bunu src/foo.ts dosyasina uygula, ${values.name ?? "dosya-kodcu"} alt ajanini kullan"\n`,
+  );
   return 0;
 }
 

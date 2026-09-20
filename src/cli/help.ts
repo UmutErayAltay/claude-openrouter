@@ -23,6 +23,9 @@ Claude Code ile birlestirme
   sync                     Modelleri ~/.claude/settings.json icindeki modelPicker'a yaz
   sync --revert            Son sync oncesi haline dondur
   claude [...]             Proxy'yi baslat ve claude'u ayni argumanlarla calistir
+  agent [model-id]         Tek dosyada calisan alt ajan olustur (Opus planlar, bu model kodlar)
+      --name <ad>            alt ajanin adi (varsayilan: dosya-kodcu)
+      --scope project|user   .claude/agents (varsayilan) ya da ~/.claude/agents
 
 Proxy
   start                    Proxy'yi arka planda baslat
