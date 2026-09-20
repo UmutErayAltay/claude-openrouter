@@ -1,6 +1,6 @@
 import { mapStopReason, mapUsage, messageId, parseToolArguments } from "./openAIToAnthropic.js";
 import { sseEvent } from "./sse.js";
-import type { OpenAIStreamChunk, OpenAIUsage } from "./types.js";
+import type { OpenAIResponse, OpenAIStreamChunk, OpenAIUsage } from "./types.js";
 
 interface OpenBlock {
   index: number;
@@ -227,4 +227,61 @@ function isParsableJson(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Produces the same event sequence from a complete, non-streamed response, for
+ * providers that only emit native tool calls when streaming is off. Claude
+ * Code still reads a well-formed stream; it just arrives in one piece.
+ */
+export function synthesizeStream(
+  response: OpenAIResponse,
+  requestedModel: string,
+): string[] {
+  const translator = new StreamTranslator(requestedModel);
+  const choice = response.choices?.[0];
+  const events: string[] = [];
+
+  const text = choice?.message?.content;
+  events.push(
+    ...translator.chunk({
+      id: response.id,
+      choices: [{ delta: typeof text === "string" && text ? { content: text } : {} }],
+    }),
+  );
+
+  const calls = choice?.message?.tool_calls ?? [];
+  calls.forEach((call, index) => {
+    events.push(
+      ...translator.chunk({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index,
+                  id: call.id,
+                  type: "function",
+                  function: {
+                    name: call.function?.name,
+                    arguments: call.function?.arguments,
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+  });
+
+  events.push(
+    ...translator.chunk({
+      choices: [{ delta: {}, finish_reason: choice?.finish_reason ?? "stop" }],
+      usage: response.usage,
+    }),
+  );
+
+  events.push(...translator.finish());
+  return events;
 }

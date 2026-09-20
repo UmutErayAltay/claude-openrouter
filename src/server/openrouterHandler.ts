@@ -1,22 +1,39 @@
 import type { ServerResponse } from "node:http";
 import type { Config, ModelEntry } from "../config.js";
-import { resolveOpenRouterKey } from "../config.js";
+import { markModelNonStreaming, resolveOpenRouterKey } from "../config.js";
 import { anthropicToOpenAI } from "../translate/anthropicToOpenAI.js";
 import { anthropicError, openRouterErrorToAnthropic } from "../translate/errors.js";
 import { openAIToAnthropic } from "../translate/openAIToAnthropic.js";
 import { PING_EVENT, SseDataParser, sseEvent } from "../translate/sse.js";
-import { StreamTranslator } from "../translate/stream.js";
-import type { AnthropicRequest, OpenAIResponse, OpenAIStreamChunk } from "../translate/types.js";
+import { StreamTranslator, synthesizeStream } from "../translate/stream.js";
+import {
+  looksLikeTextToolCall,
+  parseTextToolCalls,
+  recoverToolCalls,
+} from "../translate/textToolCall.js";
+import type {
+  AnthropicRequest,
+  AnthropicTool,
+  OpenAIResponse,
+  OpenAIStreamChunk,
+} from "../translate/types.js";
 import { sendJson } from "./http.js";
 
 /** Claude Code aborts a stream that sends no bytes for 300s; stay well under. */
 const PING_INTERVAL_MS = 15_000;
+
+export interface OpenRouterHandlerOptions {
+  log?: (message: string) => void;
+  /** Overridable so tests don't write to the real config file. */
+  markNonStreaming?: (modelId: string) => boolean;
+}
 
 export async function handleOpenRouter(
   config: Config,
   entry: ModelEntry,
   request: AnthropicRequest,
   res: ServerResponse,
+  options: OpenRouterHandlerOptions = {},
 ): Promise<void> {
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
@@ -62,22 +79,59 @@ export async function handleOpenRouter(
   }
 
   if (payload.stream) {
-    await streamResponse(upstream, request.model, res);
+    await streamResponse(upstream, request.model, res, {
+      // Only a turn that offered tools can reveal the failure.
+      tools: request.tools ?? [],
+      modelId: entry.id,
+      log: options.log ?? (() => {}),
+      markNonStreaming: options.markNonStreaming ?? markModelNonStreaming,
+    });
     return;
   }
 
-  const json = (await upstream.json().catch(() => ({}))) as OpenAIResponse;
-  if (json.error) {
-    sendJson(res, 502, anthropicError(502, `OpenRouter: ${json.error.message ?? "bilinmeyen hata"}`));
+  const raw = (await upstream.json().catch(() => ({}))) as OpenAIResponse;
+  if (raw.error) {
+    sendJson(res, 502, anthropicError(502, `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`));
     return;
   }
+
+  // Models that write tool calls as prose are turned back into ordinary
+  // tool-calling responses here, before anything else looks at them.
+  const { response: json, recovered } = recoverToolCalls(raw, request.tools);
+  if (recovered > 0) {
+    (options.log ?? (() => {}))(
+      `${entry.id}: ${recovered} tool cagrisi duz metinden kurtarildi`,
+    );
+  }
+
+  // Claude Code asked for a stream but this model is configured to skip
+  // upstream streaming, so the events are produced from the finished response.
+  if (request.stream) {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    for (const event of synthesizeStream(json, request.model)) res.write(event);
+    res.end();
+    return;
+  }
+
   sendJson(res, 200, openAIToAnthropic(json, request.model));
+}
+
+interface StreamContext {
+  tools: AnthropicTool[];
+  modelId: string;
+  log: (message: string) => void;
+  markNonStreaming: (modelId: string) => boolean;
 }
 
 async function streamResponse(
   upstream: Response,
   requestedModel: string,
   res: ServerResponse,
+  context: StreamContext,
 ): Promise<void> {
   res.writeHead(200, {
     "content-type": "text/event-stream",
@@ -92,6 +146,10 @@ async function streamResponse(
   const ping = setInterval(() => {
     if (!res.writableEnded) res.write(PING_EVENT);
   }, PING_INTERVAL_MS);
+
+  let sawToolCall = false;
+  let recovering = false;
+  let text = "";
 
   try {
     if (!upstream.body) {
@@ -124,8 +182,61 @@ async function streamResponse(
           return;
         }
 
+        const delta = chunk.choices?.[0]?.delta;
+        if (delta?.tool_calls?.length) sawToolCall = true;
+        if (typeof delta?.content === "string") {
+          text += delta.content;
+          // Once the prose turns out to be a tool call, stop relaying it and
+          // hold the rest back so it can be turned into a real tool block.
+          if (!recovering && context.tools.length > 0 && looksLikeTextToolCall(text)) {
+            recovering = true;
+          }
+        }
+
+        if (recovering && typeof delta?.content === "string") continue;
         for (const event of translator.chunk(chunk)) res.write(event);
       }
+    }
+
+    // The model wrote its tool calls as prose. Emitting them as real tool
+    // blocks rescues this turn; switching the model off upstream streaming
+    // lets the next one be recovered from a complete response instead.
+    if (recovering && !sawToolCall) {
+      const { calls } = parseTextToolCalls(text, context.tools);
+      if (calls.length > 0) {
+        for (const [index, call] of calls.entries()) {
+          for (const event of translator.chunk({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index,
+                      id: `toolu_recovered_${index}_${Math.random().toString(36).slice(2, 10)}`,
+                      type: "function",
+                      function: { name: call.name, arguments: JSON.stringify(call.input) },
+                    },
+                  ],
+                },
+              },
+            ],
+          })) {
+            res.write(event);
+          }
+        }
+        for (const event of translator.chunk({
+          choices: [{ delta: {}, finish_reason: "tool_calls" }],
+        })) {
+          res.write(event);
+        }
+      }
+
+      const changed = context.markNonStreaming(context.modelId);
+      context.log(
+        `${context.modelId}: tool cagrisi duz metin olarak geldi, ` +
+          `${calls.length} cagri kurtarildi` +
+          (changed ? "; bu model icin akissiz cagriya gecildi" : ""),
+      );
     }
 
     for (const event of translator.finish()) res.write(event);

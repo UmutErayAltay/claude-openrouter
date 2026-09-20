@@ -82,6 +82,8 @@ async function commandAdd(args: string[]): Promise<number> {
       context: { type: "string" },
       "max-tokens": { type: "string" },
       "behaves-as": { type: "string" },
+      "no-stream": { type: "boolean" },
+      stream: { type: "boolean" },
     },
   });
 
@@ -103,6 +105,8 @@ async function commandAdd(args: string[]): Promise<number> {
   if (values.context) entry.contextTokens = Number(values.context);
   if (values["max-tokens"]) entry.maxOutputTokens = Number(values["max-tokens"]);
   if (values["behaves-as"]) entry.behavesAs = values["behaves-as"];
+  if (values["no-stream"]) entry.stream = false;
+  if (values.stream) entry.stream = true;
 
   // Fill the gaps from the OpenRouter catalog so the picker row and the
   // context estimate are right without the user looking anything up.

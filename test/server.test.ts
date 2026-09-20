@@ -18,6 +18,9 @@ let proxyUrl: string;
 let captured: Capture[] = [];
 /** Set per test to control what the fake upstream answers with. */
 let respond: (path: string) => { status: number; headers: Record<string, string>; body: string };
+/** Models the proxy asked to switch off streaming, instead of touching disk. */
+let marked: string[] = [];
+let streamlessModel = false;
 
 function config(): Config {
   return {
@@ -25,7 +28,14 @@ function config(): Config {
     openrouterApiKey: "sk-or-test",
     openrouterBaseUrl: `${upstreamUrl}/api/v1`,
     anthropicBaseUrl: upstreamUrl,
-    models: [{ id: "openai/gpt-5", label: "GPT-5", maxOutputTokens: 8192 }],
+    models: [
+      {
+        id: "openai/gpt-5",
+        label: "GPT-5",
+        maxOutputTokens: 8192,
+        ...(streamlessModel ? { stream: false } : {}),
+      },
+    ],
   };
 }
 
@@ -48,7 +58,13 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
 
-  proxy = createProxyServer({ loadConfig: config });
+  proxy = createProxyServer({
+    loadConfig: config,
+    markNonStreaming: (modelId) => {
+      marked.push(modelId);
+      return true;
+    },
+  });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
 });
@@ -181,6 +197,158 @@ describe("proxy routing", () => {
     expect(body.type).toBe("error");
     expect(body.error.type).toBe("not_found_error");
     expect(body.error.message).toContain("model bulunamadi");
+  });
+
+  it("rescues a streamed tool call written as text and switches the model off streaming", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"id":"gen-3","choices":[{"delta":{"content":"<function=Read>\\n<parameter=file_path>\\n"}}]}\n\n' +
+        'data: {"choices":[{"delta":{"content":"a.txt\\n</parameter>\\n</function>"}}]}\n\n' +
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+        "data: [DONE]\n\n",
+    });
+    marked = [];
+
+    const response = await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "a.txt oku" }],
+      tools: [
+        {
+          name: "Read",
+          input_schema: { type: "object", properties: { file_path: { type: "string" } } },
+        },
+      ],
+    });
+    const text = await response.text();
+
+    // The turn itself is rescued: a real tool_use block reaches Claude Code.
+    expect(text).toContain('"type":"tool_use"');
+    expect(text).toContain('"name":"Read"');
+    expect(text).toContain('"file_path\\":\\"a.txt');
+    expect(text).toContain('"stop_reason":"tool_use"');
+    // And the next turn avoids the streaming path entirely.
+    expect(marked).toEqual(["openai/gpt-5"]);
+  });
+
+  it("recovers a text tool call from a non-streamed response too", async () => {
+    streamlessModel = true;
+    respond = jsonUpstream({
+      id: "gen-7",
+      choices: [
+        {
+          message: {
+            content:
+              "<function=Read>\n<parameter=file_path>\n/etc/hostname\n</parameter>\n</function>",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    });
+
+    const response = await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "oku" }],
+      tools: [
+        {
+          name: "Read",
+          input_schema: { type: "object", properties: { file_path: { type: "string" } } },
+        },
+      ],
+    });
+    const body = (await response.json()) as {
+      content: { type: string; name?: string; input?: unknown }[];
+      stop_reason: string;
+    };
+    streamlessModel = false;
+
+    expect(body.stop_reason).toBe("tool_use");
+    expect(body.content.find((block) => block.type === "tool_use")).toMatchObject({
+      name: "Read",
+      input: { file_path: "/etc/hostname" },
+    });
+  });
+
+  it("leaves a model alone when the stream carries real tool calls", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"Read","arguments":"{}"}}]}}]}\n\n' +
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+        "data: [DONE]\n\n",
+    });
+    marked = [];
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "a.txt oku" }],
+      tools: [{ name: "Read", input_schema: { type: "object" } }],
+    });
+
+    expect(marked).toEqual([]);
+  });
+
+  it("leaves a model alone when prose merely looks unusual and no tools were offered", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"choices":[{"delta":{"content":"<function=Read>"}}]}\n\n' +
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+        "data: [DONE]\n\n",
+    });
+    marked = [];
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(marked).toEqual([]);
+  });
+
+  it("builds the stream itself for a model configured without upstream streaming", async () => {
+    streamlessModel = true;
+    respond = jsonUpstream({
+      id: "gen-4",
+      choices: [
+        {
+          message: {
+            content: "Okuyorum.",
+            tool_calls: [
+              { id: "c1", type: "function", function: { name: "Read", arguments: '{"p":1}' } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    });
+
+    const response = await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "a.txt oku" }],
+    });
+    const text = await response.text();
+    streamlessModel = false;
+
+    // The upstream call went out without streaming...
+    expect(captured[0]?.body).not.toHaveProperty("stream");
+    // ...but Claude Code still receives a well-formed stream.
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(text).toContain("event: message_start");
+    expect(text).toContain('"type":"tool_use"');
+    expect(text).toContain("event: message_stop");
   });
 
   it("rejects a body that is not JSON", async () => {

@@ -13,6 +13,8 @@ export interface ProxyOptions {
   /** Re-read on every request so `cor add` takes effect without a restart. */
   loadConfig?: () => Config;
   log?: (message: string) => void;
+  /** Overridable so tests don't write to the real config file. */
+  markNonStreaming?: (modelId: string) => boolean;
 }
 
 export function createProxyServer(options: ProxyOptions = {}): Server {
@@ -20,7 +22,7 @@ export function createProxyServer(options: ProxyOptions = {}): Server {
   const log = options.log ?? (() => {});
 
   return createServer((req, res) => {
-    void handle(req, res, load, log).catch((err: unknown) => {
+    void handle(req, res, load, log, options.markNonStreaming).catch((err: unknown) => {
       log(`beklenmeyen hata: ${(err as Error).stack ?? String(err)}`);
       if (!res.headersSent) {
         sendJson(res, 500, anthropicError(500, `Proxy hatasi: ${(err as Error).message}`));
@@ -36,6 +38,7 @@ async function handle(
   res: ServerResponse,
   load: () => Config,
   log: (message: string) => void,
+  markNonStreaming?: (modelId: string) => boolean,
 ): Promise<void> {
   const path = (req.url ?? "/").split("?")[0] ?? "/";
 
@@ -89,7 +92,7 @@ async function handle(
   }
 
   log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
-  await handleOpenRouter(config, route.entry, request, res);
+  await handleOpenRouter(config, route.entry, request, res, { log, markNonStreaming });
 }
 
 /**

@@ -90,8 +90,11 @@ cor add openai/gpt-5 \
   --description "Gunluk is icin" \
   --context 400000 \
   --max-tokens 64000 \
-  --behaves-as claude-sonnet-5
+  --behaves-as claude-sonnet-5 \
+  --no-stream
 ```
+
+`--no-stream` OpenRouter'a akışsız sorar; bazı modeller akış modunda tool çağrısını bozuk üretir. Proxy bunu kendisi de fark edip kalıcı olarak kapatır, `--stream` ile açık tutabilirsin.
 
 `--behaves-as` isteğe bağlıdır: Claude Code'un "bu model bu sürümün model kataloğunda yok" uyarısını susturur. Verdiğin Claude modelinin yeteneklerini varsayar; proxy Anthropic'e özgü alanları zaten temizlediği için istek bozulmaz.
 
@@ -118,27 +121,50 @@ Proxy Anthropic Messages API'si ile OpenAI uyumlu chat-completions arasında çe
 - Model düşünürken sessiz kalan akışa 15 saniyede bir `ping` yazılır (Claude Code 300 saniye sessizlikte akışı iptal eder)
 - `stop_reason`, kullanım (token) sayıları ve hatalar Anthropic biçimine eşlenir
 - Konuşma ortasındaki `system` mesajları `user`'a çevrilir (birçok sağlayıcı ilk sıradan sonra gelen `system` mesajını reddeder)
+- **Metin hâlinde gelen tool çağrıları kurtarılır** (aşağıya bakın)
 
 Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `context_management`. Claude Code tanımadığı bir model ID'sine Anthropic'in tüm özelliklerini gönderdiği için bunların ayıklanması şart.
+
+## Metin hâlinde tool çağrısı kurtarma
+
+Bazı modeller — Qwen3 Coder bunu gerçek bir Claude Code oturumunda sık yapıyor — tool çağrısını OpenAI'nin `tool_calls` kanalı yerine **düz metin olarak** yazar:
+
+```
+<function=Read>
+<parameter=file_path>
+/etc/hostname
+</parameter>
+</function>
+```
+
+Claude Code bunu sıradan bir cevap sanır, hiçbir tool çalışmaz ve model çalışmıyor gibi görünür. Proxy bunu kendisi çözer:
+
+1. Akış sırasında metnin bir tool çağrısı olduğunu anlar, kalanını Claude Code'a yazmayı bırakır.
+2. Metni ayrıştırıp gerçek bir `tool_use` bloğuna çevirir — parametreler tool şemasındaki tipe göre dönüştürülür (`"50"` → `50`, `"true"` → `true`).
+3. O modeli kalıcı olarak akışsız moda alır (`stream: false`), çünkü akışsız yanıtta kurtarma tam yanıt üzerinde yapılabiliyor.
+
+Yani ilk tur dahil hiçbir tur kaybedilmez, sonraki turlar daha sağlam yoldan geçer. Ne olduğunu `~/.claude-openrouter/proxy.log` yazar. Elle kapatmak/açmak için `cor add ... --no-stream` veya `--stream`.
+
+Hem Qwen/Hermes XML biçimi hem de `<tool_call>{"name":...,"arguments":{...}}</tool_call>` JSON biçimi tanınır.
 
 ## Bilinen kısıtlar
 
 - **Anthropic'e özgü özellikler OpenRouter modellerinde çalışmaz:** prompt caching, extended/adaptive thinking, effort seviyeleri, `/fast` modu. Proxy bunları sessizce temizler.
 - **Bağlam penceresi oturum başında sabitlenir.** `cor claude`, ekli modellerin en küçük bağlam penceresini `CLAUDE_CODE_MAX_CONTEXT_TOKENS` olarak ayarlar. Claude Code bu değeri başlangıçta okur, oturum ortasında model değiştirince güncellenmez.
 - **Düşünme (reasoning) çıktısı atılır.** OpenRouter'ın `reasoning` alanı Anthropic imzası taşımadığı için sonraki turda geri gönderilemez; bu yüzden aktarılmaz.
-- **Tool kalitesi modele bağlıdır.** Claude Code yoğun tool kullanır; tool-calling desteği zayıf modeller iyi sonuç vermez.
+- **Tool kalitesi modele bağlıdır.** Claude Code yoğun tool kullanır; tool-calling desteği zayıf modeller iyi sonuç vermez. Metin hâlinde gelen çağrılar kurtarılır (yukarı bakın), ama modelin hiç tool çağırmamasına çare yok.
 - **`/v1/models` ile otomatik keşif çoğu OpenRouter modeli için işe yaramaz.** Claude Code bu uçtan sadece ID'sinde `claude` veya `anthropic` geçen modelleri alır. Bu yüzden asıl yol `cor sync`'in yazdığı `modelPicker` listesidir.
 - Claude Code güncellemeleri yeni istek alanları getirebilir. `cor doctor` ve testler bunu erken yakalamak için var.
 
 ## Geliştirme
 
 ```bash
-npm test          # 67 birim + uctan uca test
+npm test          # 87 birim + uctan uca test
 npm run typecheck
 npm run build
 ```
 
-Testler çeviri katmanını (tool gidiş-dönüşü, görseller, `cache_control` temizliği, `stop_reason` eşlemesi), SSE akışını (parçalı tool argümanları, kesik JSON onarımı, iki eşzamanlı tool çağrısı), yönlendirmeyi, ayar dosyası entegrasyonunu ve sahte upstream'lere karşı tüm proxy uçlarını kapsar.
+Testler çeviri katmanını (tool gidiş-dönüşü, görseller, `cache_control` temizliği, `stop_reason` eşlemesi), SSE akışını (parçalı tool argümanları, kesik JSON onarımı, iki eşzamanlı tool çağrısı), metin tool çağrısı kurtarmayı (Qwen'in gerçekte ürettiği çıktıyla), yönlendirmeyi, ayar dosyası entegrasyonunu ve sahte upstream'lere karşı tüm proxy uçlarını kapsar.
 
 ## Lisans
 

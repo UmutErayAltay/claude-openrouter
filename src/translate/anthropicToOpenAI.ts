@@ -40,7 +40,9 @@ export function anthropicToOpenAI(
   if (typeof request.temperature === "number") out.temperature = request.temperature;
   if (typeof request.top_p === "number") out.top_p = request.top_p;
   if (request.stop_sequences?.length) out.stop = request.stop_sequences;
-  if (request.stream) {
+  // entry.stream === false: the upstream call is made without streaming and
+  // the proxy produces the Anthropic events itself.
+  if (request.stream && entry.stream !== false) {
     out.stream = true;
     out.stream_options = { include_usage: true };
   }

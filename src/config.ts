@@ -22,6 +22,12 @@ export interface ModelEntry {
   /** Cap for max_tokens, in case Claude Code asks for more than the model allows. */
   maxOutputTokens?: number;
   /**
+   * false makes the proxy call OpenRouter without streaming and produce the
+   * Anthropic event stream itself. Some providers emit tool calls as plain
+   * text when asked to stream, which breaks every tool in Claude Code.
+   */
+  stream?: boolean;
+  /**
    * Optional Claude model id to borrow capabilities from, written to the
    * picker row. It silences Claude Code's "not in this version's model
    * catalog" warning; the proxy strips the Anthropic-only fields it unlocks.
@@ -118,4 +124,18 @@ export function resolveOpenRouterKey(config: Config): string | undefined {
 
 export function findModel(config: Config, modelId: string): ModelEntry | undefined {
   return config.models.find((m) => m.id === modelId);
+}
+
+/**
+ * Records that a model can't produce native tool calls while streaming, so
+ * later requests go out without upstream streaming. Returns false when the
+ * model is already marked or isn't configured.
+ */
+export function markModelNonStreaming(modelId: string): boolean {
+  const config = loadConfig();
+  const entry = findModel(config, modelId);
+  if (!entry || entry.stream === false) return false;
+  entry.stream = false;
+  saveConfig(config);
+  return true;
 }

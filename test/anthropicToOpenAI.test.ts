@@ -248,6 +248,16 @@ describe("anthropicToOpenAI", () => {
     expect(result.stream_options).toEqual({ include_usage: true });
   });
 
+  it("omits upstream streaming when the model is configured without it", () => {
+    const result = anthropicToOpenAI(build({ stream: true }), {
+      id: "openai/gpt-5",
+      stream: false,
+    });
+
+    expect(result.stream).toBeUndefined();
+    expect(result.stream_options).toBeUndefined();
+  });
+
   it("sends the OpenRouter id, not the id Claude Code asked for", () => {
     const result = anthropicToOpenAI(build({ model: "openai/gpt-5[1m]" }), entry);
     expect(result.model).toBe("openai/gpt-5");

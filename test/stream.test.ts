@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StreamTranslator } from "../src/translate/stream.js";
+import { StreamTranslator, synthesizeStream } from "../src/translate/stream.js";
 import { SseDataParser } from "../src/translate/sse.js";
 import type { OpenAIStreamChunk } from "../src/translate/types.js";
 
@@ -200,5 +200,101 @@ describe("SseDataParser", () => {
   it("handles CRLF line endings", () => {
     const parser = new SseDataParser();
     expect(parser.push('data: {"a":1}\r\n')).toEqual(['{"a":1}']);
+  });
+});
+
+describe("synthesizeStream", () => {
+  it("produces the same event sequence from a finished response", () => {
+    const events = parse(
+      synthesizeStream(
+        {
+          id: "gen-9",
+          choices: [
+            {
+              message: {
+                content: "Okuyorum.",
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "Read", arguments: '{"file_path":"a.txt"}' },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+          usage: { prompt_tokens: 30, completion_tokens: 9 },
+        },
+        "qwen/qwen3-coder-30b-a3b-instruct",
+      ),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ]);
+
+    expect(events[4]?.data.content_block).toEqual({
+      type: "tool_use",
+      id: "call_1",
+      name: "Read",
+      input: {},
+    });
+    const partial = (events[5]?.data.delta as { partial_json: string }).partial_json;
+    expect(JSON.parse(partial)).toEqual({ file_path: "a.txt" });
+    expect(events[7]?.data).toMatchObject({
+      delta: { stop_reason: "tool_use" },
+      usage: { input_tokens: 30, output_tokens: 9 },
+    });
+  });
+
+  it("handles a text-only response", () => {
+    const events = parse(
+      synthesizeStream(
+        { choices: [{ message: { content: "merhaba" }, finish_reason: "stop" }] },
+        "m",
+      ),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ]);
+  });
+
+  it("gives each of several tool calls its own block", () => {
+    const events = parse(
+      synthesizeStream(
+        {
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  { id: "c1", type: "function", function: { name: "Read", arguments: "{}" } },
+                  { id: "c2", type: "function", function: { name: "Glob", arguments: "{}" } },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        },
+        "m",
+      ),
+    );
+
+    const starts = events.filter((event) => event.type === "content_block_start");
+    expect(starts.map((event) => event.data.index)).toEqual([0, 1]);
   });
 });

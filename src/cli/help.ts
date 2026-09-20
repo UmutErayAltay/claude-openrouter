@@ -11,6 +11,10 @@ Kurulum
       --max-tokens <sayi>    cikti ust siniri
       --behaves-as <claude-id>  Claude Code'un "tanimadigi model" uyarisini susturur
                                 (ornek: --behaves-as claude-sonnet-5)
+      --no-stream            OpenRouter'a akissiz sor. Bazi modeller akis modunda
+                             tool cagrisini duz metin yaziyor; proxy bunu kendisi
+                             de fark edip kalici olarak kapatir
+      --stream               akisi acik tut
   remove <model-id>        Modeli listeden cikar
   list                     Ekli modelleri goster
   search <kelime>          OpenRouter katalogunda model ara
