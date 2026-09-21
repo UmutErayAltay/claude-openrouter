@@ -1,8 +1,10 @@
-# claude-openrouter
+# claude-openrouter (`cor`)
 
-Claude Code'a **hiç dokunmadan**, OpenRouter üzerindeki istediğin modelleri `/model` menüsüne ekler.
+*[Türkçe](README.tr.md)*
 
-Arayüz, komutlar, izin sistemi, tool'lar, erişilebilirlik — hepsi aynı kalır. Tek fark, `/model` listesinde artık senin eklediğin modellerin de olması.
+Adds any model on OpenRouter to Claude Code's `/model` menu — **without touching Claude Code itself**.
+
+The UI, commands, permission system, tools, accessibility — all stay exactly the same. The only difference is that `/model` now also lists the models you've added.
 
 ```
 /model
@@ -10,183 +12,183 @@ Arayüz, komutlar, izin sistemi, tool'lar, erişilebilirlik — hepsi aynı kal�
   Sonnet
   Haiku
   ...
-  DeepSeek V4 Flash        ← senin ekledigin
-  Qwen3 Max                ← senin ekledigin
+  DeepSeek V4 Flash        ← you added this
+  Qwen3 Max                ← you added this
 ```
 
-## Nasıl çalışıyor
+## How it works
 
-Claude Code'un kendi **LLM gateway** desteği kullanılıyor. `ANTHROPIC_BASE_URL` ile Claude Code bilgisayarında çalışan küçük bir proxy'ye yönlendiriliyor. Proxy Anthropic Messages API'sini konuşuyor ve isteği modele göre ikiye ayırıyor:
+It uses Claude Code's own **LLM gateway** support. `ANTHROPIC_BASE_URL` points Claude Code at a small local proxy. The proxy speaks the Anthropic Messages API and splits requests by model:
 
 ```
 Claude Code ──► cor proxy (127.0.0.1)
                     │
-   claude-* / sonnet / opus / haiku ──► api.anthropic.com   (aynen iletilir)
-   senin ekledigin OpenRouter modeli ──► openrouter.ai      (cevrilir)
+   claude-* / sonnet / opus / haiku ──► api.anthropic.com   (passed through unchanged)
+   your added OpenRouter model      ──► openrouter.ai       (translated)
 ```
 
-**Hibrit.** Claude modeli seçtiğinde istek doğrudan Anthropic'e gider — mevcut giriş/aboneliğin aynen çalışır. OpenRouter modeli seçtiğinde istek OpenRouter'a çevrilir.
+**Hybrid.** Pick a Claude model and the request goes straight to Anthropic — your existing login/subscription works exactly as before. Pick an OpenRouter model and the request is translated for it.
 
-Claude Code'un Anthropic kimlik bilgisi (OAuth token veya API anahtarı) **asla** OpenRouter'a gönderilmez. Proxy yalnızca `127.0.0.1` dinler.
+Claude Code's Anthropic credentials (OAuth token or API key) are **never** sent to OpenRouter. The proxy only listens on `127.0.0.1`.
 
 ---
 
-## Kurulum
+## Install
 
-Gerekenler: **Node.js 20+** ve **Claude Code 2.1.242+** (`modelPicker` ayarı için).
+Requires **Node.js 20+** and **Claude Code 2.1.242+** (for the `modelPicker` setting).
 
 ```bash
-git clone https://github.com/UmutErayAltay/Claude-code-ve-di-er-modeller.git
-cd Claude-code-ve-di-er-modeller
+git clone https://github.com/UmutErayAltay/claude-openrouter.git
+cd claude-openrouter
 npm install
 npm run build
-npm link          # 'cor' komutunu PATH'e ekler
+npm link          # puts 'cor' on your PATH
 ```
 
-`npm link` izin hatası verirse `sudo npm link` kullan, ya da link olmadan `node dist/cli/index.js <komut>` şeklinde çalıştır.
+If `npm link` fails on permissions, use `sudo npm link`, or run it unlinked via `node dist/cli/index.js <command>`.
 
-## Hızlı başlangıç
+## Quick start
 
 ```bash
-cor key sk-or-v1-...                    # OpenRouter anahtarini kaydet
+cor key sk-or-v1-...                    # save your OpenRouter key
 
 cor add deepseek/deepseek-v4-flash-0731 \
   --reasoning high \
   --cheapest --quantizations fp8,bf16,fp16 \
   --behaves-as claude-sonnet-5
 
-cor sync                                # /model menusune yansit
-cor claude                              # Claude Code'u proxy ile baslat
+cor sync                                # reflect it into the /model menu
+cor claude                              # start Claude Code through the proxy
 ```
 
-Claude Code açıldığında `/model` → eklediğin model listede. Seç, kullan.
+Open Claude Code, `/model` → your added model is in the list. Pick it, use it.
 
-Bu komutun neden böyle olduğu aşağıda tek tek açıklanıyor. Kısaca: `--reasoning high` modelin düşünmesini açar (etkisi çok büyük), `--cheapest` 27 sağlayıcı arasından en ucuzuna yönlendirir, `--quantizations` aşırı sıkıştırılmış ucuz sağlayıcıları eler, `--behaves-as` Claude Code'un "tanımadığım model" uyarısını susturur.
+Each flag is explained in detail below. Short version: `--reasoning high` turns on the model's thinking (the effect is large), `--cheapest` routes to the cheapest of the ~27 providers, `--quantizations` filters out heavily-compressed cheap providers, `--behaves-as` silences Claude Code's "unrecognized model" warning.
 
-`cor claude`'a verdiğin her argüman `claude`'a aynen geçer:
+Every argument you pass to `cor claude` is forwarded to `claude` as-is:
 
 ```bash
 cor claude --permission-mode acceptEdits
-cor claude -p "testleri calistir"
+cor claude -p "run the tests"
 ```
 
-Proxy'yi elle yönetmeyi tercih edersen:
+If you'd rather manage the proxy yourself:
 
 ```bash
 cor start
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 ```
 
-Bir şey ters giderse: `cor doctor` her adımı tek tek kontrol eder, `~/.claude-openrouter/proxy.log` ne olduğunu yazar.
+If something goes wrong: `cor doctor` checks every step one by one, and `~/.claude-openrouter/proxy.log` records what happened.
 
 ---
 
-## Komutlar
+## Commands
 
-| Komut | İş |
+| Command | What it does |
 |---|---|
-| `cor key <anahtar>` | OpenRouter anahtarını kaydet (dosya izni `0600`) |
-| `cor add <model-id>` | Model ekle. Etiket, açıklama ve bağlam penceresi katalogdan otomatik çekilir |
-| `cor remove <model-id>` | Modeli çıkar |
-| `cor list` | Ekli modelleri ve ayarlarını göster |
-| `cor search <kelime>` | OpenRouter kataloğunda model ara |
-| `cor providers <model-id>` | Modeli sunan sağlayıcıları, fiyatlarını ve kuantizasyonlarını listele |
-| `cor sync` | Modelleri `~/.claude/settings.json` içindeki `modelPicker`'a yaz |
-| `cor sync --revert` | Son `sync` öncesi haline döndür |
-| `cor agent [model-id]` | Tek dosyada çalışan alt ajan oluştur |
-| `cor dashboard` | Kullanım/kredi ve model yönetim arayüzünü tarayıcıda aç |
-| `cor start` / `stop` / `status` | Proxy'yi yönet |
-| `cor claude [...]` | Proxy'yi başlat ve `claude`'u çalıştır |
-| `cor doctor` | Kurulumu baştan sona kontrol et |
+| `cor key <key>` | Save your OpenRouter key (file permission `0600`) |
+| `cor add <model-id>` | Add a model. Label, description and context window are pulled from the catalog automatically |
+| `cor remove <model-id>` | Remove a model |
+| `cor list` | Show added models and their settings |
+| `cor search <keyword>` | Search the OpenRouter catalog |
+| `cor providers <model-id>` | List the providers serving a model, their price and quantization |
+| `cor sync` | Write the models into `~/.claude/settings.json`'s `modelPicker` |
+| `cor sync --revert` | Revert to the state before the last `sync` |
+| `cor agent [model-id]` | Generate a single-file subagent |
+| `cor dashboard` | Open the usage/credit and model management UI in a browser |
+| `cor start` / `stop` / `status` | Manage the proxy |
+| `cor claude [...]` | Start the proxy and run `claude` |
+| `cor doctor` | Check the whole setup end to end |
 
-### `cor add` seçenekleri
+### `cor add` options
 
-| Seçenek | İş |
+| Option | What it does |
 |---|---|
-| `--label <ad>` | `/model` menüsünde görünecek ad |
-| `--description <metin>` | Menüde ikinci satır |
-| `--context <sayı>` | Gerçek bağlam penceresi (token) |
-| `--max-tokens <sayı>` | Çıktı üst sınırı |
-| `--reasoning <seviye>` | `none`, `low`, `medium`, `high`, `max` |
-| `--cheapest` | Her istekte en ucuz sağlayıcı |
-| `--sort <ölçüt>` | `price` (= `--cheapest`), `throughput`, `latency` |
-| `--max-price-in <usd>` | Milyon girdi tokeni için sert üst sınır |
-| `--max-price-out <usd>` | Milyon çıktı tokeni için sert üst sınır |
-| `--quantizations <liste>` | Kabul edilen kuantizasyonlar, virgülle: `fp8,bf16,fp16` |
-| `--behaves-as <claude-id>` | Claude Code'un "tanımadığım model" uyarısını susturur |
-| `--no-stream` / `--stream` | OpenRouter'a akışsız sor / akışı açık tut |
+| `--label <name>` | Name shown in the `/model` menu |
+| `--description <text>` | Second line in the menu |
+| `--context <n>` | Real context window (tokens) |
+| `--max-tokens <n>` | Output token ceiling |
+| `--reasoning <level>` | `none`, `low`, `medium`, `high`, `max` |
+| `--cheapest` | Route to the cheapest provider on every request |
+| `--sort <metric>` | `price` (= `--cheapest`), `throughput`, `latency` |
+| `--max-price-in <usd>` | Hard ceiling on $/million input tokens |
+| `--max-price-out <usd>` | Hard ceiling on $/million output tokens |
+| `--quantizations <list>` | Accepted quantizations, comma-separated: `fp8,bf16,fp16` |
+| `--behaves-as <claude-id>` | Silences Claude Code's "unrecognized model" warning |
+| `--no-stream` / `--stream` | Query OpenRouter without streaming / keep streaming on |
 
 ---
 
-## Reasoning effort — atlanmaması gereken ayar
+## Reasoning effort — the setting you shouldn't skip
 
-`--reasoning` modelin düşünme seviyesini belirler ve **etkisi çok büyüktür**. DeepSeek kendi model kartında V4-Flash'i LiveCodeBench'te şöyle gösteriyor:
+`--reasoning` sets the model's thinking level, and **its effect is large**. DeepSeek's own model card shows V4-Flash on LiveCodeBench like this:
 
-| Ayar | Skor |
+| Setting | Score |
 |---|---|
-| Düşünme kapalı | %55.2 |
-| `high` | %88.4 |
-| `max` | %91.6 |
+| Thinking off | 55.2% |
+| `high` | 88.4% |
+| `max` | 91.6% |
 
-Ayarlamazsan sağlayıcının varsayılanı geçerli olur — yani farkında olmadan en üstteki satırda olabilirsin.
+If you don't set it, the provider's default applies — meaning you could unknowingly be on the top row.
 
-**`high` kullan, `max` kullanma.** Ölçtüğümüz rakamlar:
+**Use `high`, not `max`.** What we measured:
 
-| Effort | max_tokens | Düşünme token'ı | Toplam çıktı | Sonuç |
+| Effort | max_tokens | Thinking tokens | Total output | Result |
 |---|---|---|---|---|
-| high | 4.000 | 1.376 | 1.672 | ✅ |
-| high | 16.000 | 1.749 | 2.265 | ✅ |
-| max | 4.000 | 3.999 | 4.000 | ❌ **boş cevap** |
-| max | 16.000 | 10.544 | 12.685 | ✅ (aynı cevap) |
+| high | 4,000 | 1,376 | 1,672 | ✅ |
+| high | 16,000 | 1,749 | 2,265 | ✅ |
+| max | 4,000 | 3,999 | 4,000 | ❌ **empty response** |
+| max | 16,000 | 10,544 | 12,685 | ✅ (same answer) |
 
-`max`, aynı cevap için ~7 kat fazla token yakıyor ve Claude Code'un normal `max_tokens` bütçesinde düşünürken bütçeyi bitirip boş cevap dönüyor.
+`max` burns ~7x the tokens for the same answer, and under Claude Code's normal `max_tokens` budget it can spend the whole budget thinking and return nothing.
 
 ---
 
-## Sağlayıcı seçimi ve en ucuza yönlendirme
+## Provider selection and cheapest-routing
 
-OpenRouter'da aynı modeli birden çok sağlayıcı sunar ve fiyatlar ciddi şekilde ayrışır:
+Several providers serve the same OpenRouter model, and prices vary a lot:
 
 ```bash
 cor providers deepseek/deepseek-v4-flash-0731
 ```
 
 ```
-deepseek/deepseek-v4-flash-0731 - 27 saglayici (ucuzdan pahaliya)
+deepseek/deepseek-v4-flash-0731 - 27 providers (cheapest to priciest)
 
-saglayici                 girdi $/M  cikti $/M  kuantizasyon      baglam
-Relace                        0.040      0.120           fp4   1.048.576
-StreamLake                    0.044      0.132           fp8   1.024.000
-Baidu                         0.048      0.144           fp8   1.048.576
-DeepInfra                     0.060      0.180           fp8   1.048.576
+provider                  in $/M     out $/M    quantization      context
+Relace                        0.040      0.120           fp4   1,048,576
+StreamLake                    0.044      0.132           fp8   1,024,000
+Baidu                         0.048      0.144           fp8   1,048,576
+DeepInfra                     0.060      0.180           fp8   1,048,576
 ...
-Cloudflare                    0.440      1.320           fp8   1.310.720
+Cloudflare                    0.440      1.320           fp8   1,310,720
 
-En pahali, en ucuzun 11.0 kati.
+Priciest is 11.0x the cheapest.
 ```
 
-Hep en ucuzu için `--cheapest`. Yedeklemeler açık kalır: en ucuz sağlayıcı kapalıysa sıradaki devreye girer.
+Use `--cheapest` to always get the cheapest. Fallbacks stay on: if the cheapest provider is down, the next one takes over.
 
-**Kuantizasyon sütununa dikkat.** Yukarıda en ucuz sağlayıcı `fp4` sunuyor — 4 bit'e sıkıştırılmış ağırlıklar, kod kalitesini düşürebilir. Bir üstündeki `fp8` sağlayıcı yalnızca %10 daha pahalı:
+**Watch the quantization column.** In the example above the cheapest provider serves `fp4` — weights compressed to 4 bits, which can hurt code quality. The next one up, `fp8`, is only ~10% pricier:
 
 ```bash
 cor add <model-id> --cheapest --quantizations fp8,bf16,fp16
 ```
 
-Canlı doğrulandı: filtresiz `--cheapest` fp4 sunan sağlayıcıya, filtreyle en ucuz fp8 sağlayıcıya gidiyor.
+Verified live: unfiltered `--cheapest` lands on the `fp4` provider; with the filter it lands on the cheapest `fp8` provider instead.
 
 ---
 
-## Opus planlasın, ucuz model kodlasın
+## Opus plans, the cheap model codes
 
-Pahalı modeli düşünmeye, ucuz modeli yazmaya ayırmak istersen: Claude Code'un alt ajanları (subagent) kendi modellerini kullanabiliyor. `cor agent` bunun için hazır bir tanım yazar.
+If you want the expensive model to think and a cheap one to write: Claude Code's subagents can run their own model. `cor agent` generates a ready-made definition for this.
 
 ```bash
-cor agent                                          # ekli ilk modeli kullanir
-cor agent deepseek/deepseek-v4-flash-0731 --name kodcu
+cor agent                                          # uses the first added model
+cor agent deepseek/deepseek-v4-flash-0731 --name coder
 ```
 
-`.claude/agents/dosya-kodcu.md` oluşturur:
+Creates `.claude/agents/file-coder.md`:
 
 ```yaml
 model: deepseek/deepseek-v4-flash-0731
@@ -195,27 +197,27 @@ permissionMode: acceptEdits
 maxTurns: 30
 ```
 
-Kullanımı — ana oturum Opus'ta (veya istediğin Claude modelinde) kalır:
+In use — the main session stays on Opus (or whichever Claude model you prefer):
 
 ```
-> auth akisini nasil duzeltecegimizi planla
-  ... Opus planlar, dosyalari gezer, karar verir ...
+> plan how to fix the auth flow
+  ... Opus plans, browses files, decides ...
 
-> bu plani src/auth.ts dosyasina uygula, dosya-kodcu alt ajanini kullan
-  ... ucuz model sadece o dosyayi acar ve yazar ...
+> apply this plan to src/auth.ts, use the file-coder subagent
+  ... the cheap model just opens that file and writes it ...
 ```
 
-Plan, araştırma ve mimari karar Opus'ta kalır; alt ajan yalnızca verilen planı verilen dosyaya uygular ve ne değiştirdiğini özetler.
+Planning, research and architectural decisions stay with Opus; the subagent only applies the given plan to the given file and summarizes what it changed.
 
-**Kısa tool listesi yan fayda değil, asıl mesele.** Metin hâlinde tool çağrısı üreten modeller bunu Claude Code'un 38 tool'luk tam setinde yapıyor; `Read, Edit, Write` ile aynı model canlı testte baştan sona native tool çağrısı üretti.
+**A short tool list isn't a side benefit — it's the point.** Models that emit tool calls as plain text do so against Claude Code's full set of 38 tools; the same model with `Read, Edit, Write` produced native tool calls start to finish in live testing.
 
-**Tek dosya sınırı ne kadar sıkı:** alt ajanın elinde Bash, Glob, Grep yok — dosya arayamaz, komut çalıştıramaz. Ama `Write` ile teoride başka bir yola yazabilir; bunu engelleyen şey sistem istemindeki talimat, sert bir kum havuzu değil. Sert sınır istiyorsan alt ajana [PreToolUse hook](https://code.claude.com/docs/en/hooks) ekleyip yol kontrolü yapabilirsin.
+**How tight the single-file boundary really is:** the subagent has no Bash, Glob, or Grep — it can't search for files or run commands. But `Write` could in theory write somewhere else; what stops that is the system-prompt instruction, not a hard sandbox. For a hard boundary, add a [PreToolUse hook](https://code.claude.com/docs/en/hooks) to the subagent that checks the path.
 
 ---
 
-## Metin hâlinde tool çağrısı kurtarma
+## Text-mode tool-call recovery
 
-Bazı modeller tool çağrısını OpenAI'nin `tool_calls` kanalı yerine **düz metin olarak** yazar:
+Some models write tool calls as **plain text** instead of using OpenAI's `tool_calls` channel:
 
 ```
 <function=Read>
@@ -225,33 +227,33 @@ Bazı modeller tool çağrısını OpenAI'nin `tool_calls` kanalı yerine **düz
 </function>
 ```
 
-Claude Code bunu sıradan bir cevap sanır, hiçbir tool çalışmaz, model bozuk görünür. Proxy bunu kendisi çözer:
+Claude Code treats this as an ordinary reply, no tool runs, and the model looks broken. The proxy fixes this itself:
 
-1. Akış sırasında metnin bir tool çağrısı olduğunu anlar, kalanını Claude Code'a yazmayı bırakır.
-2. Ayrıştırıp gerçek bir `tool_use` bloğuna çevirir — parametreler tool şemasındaki tipe göre dönüştürülür (`"50"` → `50`, `"true"` → `true`).
-3. O modeli kalıcı olarak akışsız moda alır (`stream: false`), çünkü akışsız yanıtta kurtarma tam yanıt üzerinde yapılabiliyor.
+1. Detects mid-stream that the text is a tool call and stops forwarding the rest to Claude Code.
+2. Parses it into a real `tool_use` block — parameters are coerced to the type the tool schema expects (`"50"` → `50`, `"true"` → `true`).
+3. Permanently switches that model to non-streaming mode (`stream: false`), because the recovery can only be done on the full response.
 
-İlk tur dahil hiçbir tur kaybedilmez. Ne olduğunu `~/.claude-openrouter/proxy.log` yazar. Elle kapatmak/açmak için `--no-stream` / `--stream`.
+No turn is lost, including the first one. What happened is written to `~/.claude-openrouter/proxy.log`. Toggle it manually with `--no-stream` / `--stream`.
 
-Hem Qwen/Hermes XML biçimi hem `<tool_call>{"name":...,"arguments":{...}}</tool_call>` JSON biçimi tanınır.
+Both the Qwen/Hermes XML format and the `<tool_call>{"name":...,"arguments":{...}}</tool_call>` JSON format are recognized.
 
 ---
 
-## Çeviri neyi kapsıyor
+## What the translation covers
 
-Proxy, Anthropic Messages API'si ile OpenAI uyumlu chat-completions arasında çeviri yapar:
+The proxy translates between the Anthropic Messages API and OpenAI-compatible chat completions:
 
-- Sistem istemi, metin, görsel (base64 → data URL)
-- `tool_use` ↔ `tool_calls`, `tool_result` ↔ `tool` mesajı, hatalı sonuçlar `Error:` önekiyle
-- Tool şemaları (`input_schema` → `parameters`) ve `tool_choice`
-- Akış (SSE): OpenAI parçaları → `message_start` / `content_block_*` / `message_delta` / `message_stop`
-- Parçalı gelen tool argümanları tamponlanır; kesik JSON onarılır, Claude Code'a hiçbir zaman bozuk blok gitmez
-- Model düşünürken sessiz kalan akışa 15 saniyede bir `ping` yazılır (Claude Code 300 saniye sessizlikte akışı iptal eder)
-- `stop_reason`, token sayıları ve hatalar Anthropic biçimine eşlenir
-- Konuşma ortasındaki `system` mesajları `user`'a çevrilir (birçok sağlayıcı ilk sıradan sonraki `system` mesajını reddeder)
-- Metin hâlinde gelen tool çağrıları kurtarılır
+- System prompt, text, images (base64 → data URL)
+- `tool_use` ↔ `tool_calls`, `tool_result` ↔ `tool` message, failed results get an `Error:` prefix
+- Tool schemas (`input_schema` → `parameters`) and `tool_choice`
+- Streaming (SSE): OpenAI chunks → `message_start` / `content_block_*` / `message_delta` / `message_stop`
+- Tool arguments arriving in pieces are buffered; truncated JSON is repaired so Claude Code never sees a broken block
+- A `ping` is written every 15 seconds during silent stretches while the model thinks (Claude Code cancels a stream after 300 seconds of silence)
+- `stop_reason`, token counts and errors are mapped to the Anthropic shape
+- Mid-conversation `system` messages are converted to `user` (many providers reject a `system` message after the first one)
+- Text-mode tool calls are recovered
 
-Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `context_management`. Claude Code tanımadığı bir model ID'sine Anthropic'in tüm özelliklerini gönderdiği için bunların ayıklanması şart; düşünme için yerine OpenRouter'ın kendi `reasoning` parametresi konur.
+Stripped out: `cache_control`, `thinking` / adaptive reasoning, `effort`, `context_management`. These have to be stripped because Claude Code sends the full set of Anthropic-only fields to whatever model ID you give it; OpenRouter's own `reasoning` parameter is used for thinking instead.
 
 ---
 
@@ -261,52 +263,52 @@ Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `cont
 cor dashboard
 ```
 
-Proxy'yi başlatır ve `http://127.0.0.1:<port>/dashboard`'ı açar (tarayıcıyı açmayı dener, başaramazsa URL'yi yine de yazdırır — başlıksız/konteyner ortamlarda beklenen davranış budur). Tek sayfa, dış bağımlılık yok, harici CDN yok:
+Starts the proxy and opens `http://127.0.0.1:<port>/dashboard` (it tries to open your browser, and prints the URL either way if that fails — the expected behavior in headless/container setups). A single page, no external dependencies, no CDN:
 
-- **Kalan kredi**: OpenRouter'ın `/key` ucundan canlı — limit, kalan, günlük/haftalık/aylık kullanım. Anahtar geçersiz/eksik/erişilemez olduğunda bunu ayrı ayrı gösterir, dashboard'un geri kalanını etkilemez.
-- **Harcama**: son 14 günün grafiği, model bazında dökum, son istekler tablosu — hepsi `~/.claude-openrouter/usage.jsonl`'dan.
-- **Model yönetimi**: ekleme, düzenleme (reasoning, sağlayıcı sırası, kuantizasyon, `behaves-as`, akış), silme; katalogda arama-yaz; `cor sync`/`--revert` butonları.
-- **Alt ajanlar**: `.claude/agents/` içindeki (proje ve kullanıcı kapsamı) ajanları listeler, hangisinin senin yapılandırdığın bir modeli kullandığını işaretler; yeni ajan oluşturma formu.
+- **Remaining credit**: live from OpenRouter's `/key` endpoint — limit, remaining, daily/weekly/monthly usage. When the key is invalid, missing, or unreachable it shows that state on its own, without breaking the rest of the dashboard.
+- **Spend**: a 14-day chart, a per-model breakdown, and a recent-requests table — all read from `~/.claude-openrouter/usage.jsonl`.
+- **Model management**: add, edit (reasoning, provider sort, quantizations, `behaves-as`, streaming), remove; search-to-add from the catalog; `cor sync`/`--revert` buttons.
+- **Subagents**: lists the agents under `.claude/agents/` (project and user scope), flags which ones use a model you've configured, and a form to create a new one.
 
-Mutasyon uçları (model ekle/sil, ajan yaz) sadece `127.0.0.1`/`localhost`'tan ve dashboard'un kendi origin'inden gelen isteklere açık — açık bıraktığın başka bir sekmenin sessizce buraya yazamaması için.
+The mutating endpoints (add/remove a model, write an agent) only accept requests from `127.0.0.1`/`localhost` and the dashboard's own origin — so another tab you have open can't silently write to it.
 
 ---
 
-## Dosyalar
+## Files
 
-| Dosya | İçerik |
+| File | Contents |
 |---|---|
-| `~/.claude-openrouter/config.json` | Anahtar, port, model listesi (izin `0600`) |
-| `~/.claude-openrouter/proxy.log` | Proxy günlüğü |
-| `~/.claude-openrouter/usage.jsonl` | Dashboard'un okuduğu kullanım kaydı (2MB'ı geçince otomatik kırpılır) |
-| `~/.claude/settings.json` | `cor sync` yalnızca `modelPicker` anahtarını yazar |
-| `~/.claude/settings.json.cor-bak` | Son `sync` öncesi yedek |
+| `~/.claude-openrouter/config.json` | Key, port, model list (permission `0600`) |
+| `~/.claude-openrouter/proxy.log` | Proxy log |
+| `~/.claude-openrouter/usage.jsonl` | Usage log the dashboard reads (auto-trimmed past 2MB) |
+| `~/.claude/settings.json` | `cor sync` only writes the `modelPicker` key |
+| `~/.claude/settings.json.cor-bak` | Backup from before the last `sync` |
 
-`cor sync` dosyanın geri kalanına dokunmaz; JSON bozuksa hiç yazmaz. `CLAUDE_OPENROUTER_DIR` ve `CLAUDE_CONFIG_DIR` ile dizinleri değiştirebilirsin. `OPENROUTER_API_KEY` ortam değişkeni kayıtlı anahtarın önüne geçer — anahtarı diske hiç yazmak istemiyorsan.
-
----
-
-## Bilinen kısıtlar
-
-- **Anthropic'e özgü özellikler OpenRouter modellerinde çalışmaz:** prompt caching, extended/adaptive thinking, effort seviyeleri, `/fast` modu. Proxy bunları temizler; düşünme için `--reasoning` kullanılır.
-- **Bağlam penceresi oturum başında sabitlenir.** `cor claude`, ekli modellerin en küçük bağlam penceresini `CLAUDE_CODE_MAX_CONTEXT_TOKENS` olarak ayarlar. Claude Code bu değeri başlangıçta okur, oturum ortasında model değiştirince güncellenmez.
-- **Düşünme (reasoning) çıktısı gösterilmez.** OpenRouter'ın `reasoning` alanı Anthropic imzası taşımadığı için sonraki turda geri gönderilemez; model düşünür, çıktısı aktarılmaz.
-- **Tool kalitesi modele bağlıdır.** Claude Code yoğun tool kullanır. Metin hâlinde gelen çağrılar kurtarılır, ama modelin hiç tool çağırmamasına çare yok.
-- **`/v1/models` ile otomatik keşif çoğu OpenRouter modeli için işe yaramaz.** Claude Code bu uçtan yalnızca ID'sinde `claude` veya `anthropic` geçen modelleri alır. Asıl yol `cor sync`'in yazdığı `modelPicker` listesidir.
-- Claude Code güncellemeleri yeni istek alanları getirebilir. `cor doctor` ve testler bunu erken yakalamak için var.
+`cor sync` never touches the rest of the file, and writes nothing if the JSON is malformed. Override the directories with `CLAUDE_OPENROUTER_DIR` and `CLAUDE_CONFIG_DIR`. The `OPENROUTER_API_KEY` environment variable takes precedence over the saved key, for when you don't want the key written to disk at all.
 
 ---
 
-## Geliştirme
+## Known limits
+
+- **Anthropic-only features don't work on OpenRouter models:** prompt caching, extended/adaptive thinking, effort levels, `/fast` mode. The proxy strips these; use `--reasoning` for thinking instead.
+- **The context window is fixed for the session.** `cor claude` sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the smallest context window among your added models. Claude Code reads this value at startup; it isn't updated if you switch models mid-session.
+- **Reasoning output isn't shown.** OpenRouter's `reasoning` field doesn't carry an Anthropic signature, so it can't be sent back on the next turn — the model thinks, but that output isn't passed through.
+- **Tool quality depends on the model.** Claude Code makes heavy use of tools. Text-mode calls are recovered, but there's no fix for a model that never calls a tool at all.
+- **Auto-discovery via `/v1/models` doesn't work for most OpenRouter models.** Claude Code only pulls models from that endpoint whose ID contains `claude` or `anthropic`. The real path is the `modelPicker` list that `cor sync` writes.
+- Claude Code updates can introduce new request fields. `cor doctor` and the test suite exist to catch this early.
+
+---
+
+## Development
 
 ```bash
-npm test          # 172 birim + uctan uca test
+npm test          # 172 unit + end-to-end tests
 npm run typecheck
 npm run build
 ```
 
-Testler çeviri katmanını (tool gidiş-dönüşü, görseller, `cache_control` temizliği, `stop_reason` eşlemesi, reasoning ve sağlayıcı parametreleri), SSE akışını (parçalı tool argümanları, kesik JSON onarımı, iki eş zamanlı tool çağrısı), metin tool çağrısı kurtarmayı, yönlendirmeyi, ayar dosyası entegrasyonunu ve sahte upstream'lere karşı tüm proxy uçlarını kapsar.
+The tests cover the translation layer (tool round-trips, images, `cache_control` stripping, `stop_reason` mapping, reasoning and provider parameters), SSE streaming (chunked tool arguments, truncated-JSON repair, two concurrent tool calls), text-mode tool-call recovery, routing, settings-file integration, and every proxy endpoint against fake upstreams.
 
-## Lisans
+## License
 
 MIT
