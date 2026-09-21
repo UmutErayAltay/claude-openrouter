@@ -47,11 +47,7 @@ export async function isPortAnswering(port: number): Promise<boolean> {
   }
 }
 
-export async function startProxy(): Promise<{ port: number; alreadyRunning: boolean }> {
-  const port = loadConfig().port;
-
-  if (await isPortAnswering(port)) return { port, alreadyRunning: true };
-
+function spawnDetachedProxy(port: number): void {
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
   const out = openSync(logPath(), "a");
 
@@ -63,6 +59,14 @@ export async function startProxy(): Promise<{ port: number; alreadyRunning: bool
   child.unref();
 
   if (child.pid) writeFileSync(pidPath(), `${child.pid}\n`);
+}
+
+export async function startProxy(): Promise<{ port: number; alreadyRunning: boolean }> {
+  const port = loadConfig().port;
+
+  if (await isPortAnswering(port)) return { port, alreadyRunning: true };
+
+  spawnDetachedProxy(port);
 
   // Wait for the listener rather than assuming it came up.
   for (let attempt = 0; attempt < 40; attempt++) {
@@ -71,6 +75,16 @@ export async function startProxy(): Promise<{ port: number; alreadyRunning: bool
   }
 
   throw new Error(`Proxy baslatilamadi. Log: ${logPath()}`);
+}
+
+/**
+ * Starts a replacement proxy process without waiting for the current one to
+ * release the port first — the new process retries on EADDRINUSE (see
+ * server/main.ts) until the old one exits. Used by the dashboard's restart
+ * button, called from inside the very process being replaced.
+ */
+export function spawnReplacementProxy(): void {
+  spawnDetachedProxy(loadConfig().port);
 }
 
 export function stopProxy(): boolean {

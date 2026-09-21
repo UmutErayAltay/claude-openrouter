@@ -69,6 +69,12 @@ export interface ModelEntry {
    * catalog" warning; the proxy strips the Anthropic-only fields it unlocks.
    */
   behavesAs?: string;
+  /**
+   * True when `stream: false` was set automatically by markModelNonStreaming,
+   * not chosen by the user. Lets the dashboard show *why* a model is
+   * non-streaming instead of it looking identical to a manual `--no-stream`.
+   */
+  autoRecovered?: boolean;
 }
 
 export interface Config {
@@ -172,6 +178,7 @@ export function markModelNonStreaming(modelId: string): boolean {
   const entry = findModel(config, modelId);
   if (!entry || entry.stream === false) return false;
   entry.stream = false;
+  entry.autoRecovered = true;
   saveConfig(config);
   return true;
 }

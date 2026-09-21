@@ -1,24 +1,35 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentOptions } from "../agentTemplate.js";
 import { agentsDir } from "../agentTemplate.js";
-import { listAgents as listAgentsImpl, type AgentSummary } from "../agentDiscovery.js";
+import {
+  deleteAgent as deleteAgentImpl,
+  listAgents as listAgentsImpl,
+  AgentOpError,
+  type AgentSummary,
+} from "../agentDiscovery.js";
 import { writeAgent as writeAgentImpl } from "../agentTemplate.js";
 import {
   configPath,
   findModel,
+  logPath,
   resolveOpenRouterKey,
   saveConfig as saveConfigImpl,
   type Config,
   type ModelEntry,
 } from "../config.js";
 import {
+  isModelPickerSynced as isModelPickerSyncedImpl,
   revertModelPicker as revertModelPickerImpl,
   syncModelPicker as syncModelPickerImpl,
 } from "../claudeSettings.js";
 import { fetchCatalog, fetchEndpoints, searchCatalog } from "../openrouterCatalog.js";
 import { addModel, ModelOpError, removeModel, updateModel, type ModelInput } from "../modelOps.js";
+import { testModel as testModelImpl, type TestModelResult } from "../modelTest.js";
+import { tailLines } from "../logTail.js";
+import { spawnReplacementProxy } from "../proxyProcess.js";
 import {
   aggregateUsage,
+  recordUsage as recordUsageImpl,
   readUsage as readUsageImpl,
   type UsageRecord,
 } from "../usageLog.js";
@@ -27,10 +38,23 @@ import { readBody, sendJson } from "./http.js";
 export interface DashboardDeps {
   saveConfig: (config: Config) => void;
   readUsage: () => UsageRecord[];
+  recordUsage: (entry: Omit<UsageRecord, "ts">) => void;
   syncModelPicker: (models: ModelEntry[]) => { path: string; removed: boolean };
   revertModelPicker: () => { path: string; restored: boolean };
+  isModelPickerSynced: (models: ModelEntry[]) => boolean;
   listAgents: (config: Config) => AgentSummary[];
   writeAgent: (options: AgentOptions) => { path: string; overwritten: boolean };
+  deleteAgent: (file: string) => void;
+  testModel: (
+    config: Config,
+    entry: ModelEntry,
+    recordUsage: (entry: Omit<UsageRecord, "ts">) => void,
+  ) => Promise<TestModelResult>;
+  tailLog: (maxLines: number) => string[];
+  /** Ends this process; the dashboard's "stop proxy" button. */
+  stopProcess: () => void;
+  /** Starts a replacement process and ends this one; "restart proxy". */
+  restartProcess: () => void;
   now: () => number;
 }
 
@@ -38,10 +62,20 @@ export function defaultDashboardDeps(): DashboardDeps {
   return {
     saveConfig: saveConfigImpl,
     readUsage: readUsageImpl,
+    recordUsage: recordUsageImpl,
     syncModelPicker: syncModelPickerImpl,
     revertModelPicker: revertModelPickerImpl,
+    isModelPickerSynced: isModelPickerSyncedImpl,
     listAgents: listAgentsImpl,
     writeAgent: writeAgentImpl,
+    deleteAgent: deleteAgentImpl,
+    testModel: testModelImpl,
+    tailLog: (maxLines) => tailLines(logPath(), maxLines),
+    stopProcess: () => process.exit(0),
+    restartProcess: () => {
+      spawnReplacementProxy();
+      process.exit(0);
+    },
     now: () => Date.now(),
   };
 }
@@ -240,6 +274,7 @@ export async function handleDashboard(
       keySource: process.env.OPENROUTER_API_KEY ? "env" : config.openrouterApiKey ? "config" : "none",
       modelCount: config.models.length,
       agentCount: deps.listAgents(config).length,
+      synced: deps.isModelPickerSynced(config.models),
     });
     return true;
   }
@@ -249,10 +284,61 @@ export async function handleDashboard(
     return true;
   }
 
+  if (req.method === "GET" && path === "/dashboard/api/health") {
+    const credit = await fetchCreditInfo(config);
+    const keySource = process.env.OPENROUTER_API_KEY ? "env" : config.openrouterApiKey ? "config" : "none";
+    const synced = deps.isModelPickerSynced(config.models);
+    const checks = [
+      {
+        id: "key",
+        label: "OpenRouter anahtari",
+        ok: keySource !== "none",
+        hint: keySource === "none" ? "cor key <anahtar>" : undefined,
+      },
+      {
+        id: "models",
+        label: "Ekli model",
+        ok: config.models.length > 0,
+        hint: config.models.length === 0 ? "cor add <model-id>" : undefined,
+      },
+      {
+        id: "synced",
+        label: "Claude Code menusu guncel",
+        ok: synced,
+        hint: synced ? undefined : '"Menuye yaz" butonuna bas',
+      },
+      {
+        id: "credit",
+        label: "OpenRouter erisimi",
+        ok: credit.ok,
+        hint: credit.ok ? undefined : credit.message,
+      },
+    ];
+    sendJson(res, 200, { checks });
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/logs") {
+    const lines = Number(url.searchParams.get("lines") ?? "200") || 200;
+    sendJson(res, 200, { lines: deps.tailLog(Math.min(lines, 2000)) });
+    return true;
+  }
+
   if (req.method === "GET" && path === "/dashboard/api/usage") {
     const days = Number(url.searchParams.get("days") ?? "14") || 14;
     const recent = Number(url.searchParams.get("recent") ?? "20") || 20;
-    sendJson(res, 200, aggregateUsage(deps.readUsage(), { days, recent, now: deps.now() }));
+    const model = url.searchParams.get("model") ?? undefined;
+    sendJson(res, 200, aggregateUsage(deps.readUsage(), { days, recent, model, now: deps.now() }));
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/export") {
+    const payload = JSON.stringify({ models: config.models }, null, 2);
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-disposition": 'attachment; filename="claude-openrouter-models.json"',
+    });
+    res.end(payload);
     return true;
   }
 
@@ -294,6 +380,17 @@ export async function handleDashboard(
     } catch (err) {
       sendJson(res, err instanceof ModelOpError ? 400 : 500, { error: (err as Error).message });
     }
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/models/test") {
+    const body = await readJsonBody<{ id?: string }>(req);
+    const entry = body?.id ? findModel(config, body.id) : undefined;
+    if (!entry) {
+      sendJson(res, 400, { error: "Bilinmeyen model id." });
+      return true;
+    }
+    sendJson(res, 200, await deps.testModel(config, entry, deps.recordUsage));
     return true;
   }
 
@@ -366,6 +463,35 @@ export async function handleDashboard(
       200,
       deps.writeAgent({ name: body.name, modelId: body.modelId, scope, label: entry?.label }),
     );
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/agents/delete") {
+    const body = await readJsonBody<{ file?: string }>(req);
+    if (!body?.file) {
+      sendJson(res, 400, { error: "file zorunlu." });
+      return true;
+    }
+    try {
+      deps.deleteAgent(body.file);
+      sendJson(res, 200, { deleted: true });
+    } catch (err) {
+      sendJson(res, err instanceof AgentOpError ? 400 : 500, { error: (err as Error).message });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/proxy/stop") {
+    sendJson(res, 200, { stopping: true });
+    // After the response is actually flushed, not before — otherwise the
+    // client sees a dropped connection instead of a clean 200.
+    res.on("finish", () => setTimeout(() => deps.stopProcess(), 50));
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/proxy/restart") {
+    sendJson(res, 200, { restarting: true });
+    res.on("finish", () => setTimeout(() => deps.restartProcess(), 50));
     return true;
   }
 

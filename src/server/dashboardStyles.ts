@@ -351,4 +351,86 @@ label {
 }
 .toast.error { border-color: rgba(224, 100, 90, 0.4); color: var(--danger); }
 .toast.success { border-color: rgba(111, 179, 119, 0.4); color: var(--success); }
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.health-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.health-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.health-list .health-icon {
+  font-family: var(--mono);
+  width: 14px;
+  flex-shrink: 0;
+}
+.health-list li.ok .health-icon { color: var(--success); }
+.health-list li.fail .health-icon { color: var(--danger); }
+.health-list .health-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.filter-select { min-width: 140px; }
+
+.log-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.log-toggle input { margin: 0; }
+
+.log-box {
+  background: #0a0a0b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.badge.sync-ok { border-color: rgba(111, 179, 119, 0.4); color: var(--success); }
+.badge.sync-stale { border-color: rgba(224, 100, 90, 0.4); color: var(--danger); }
+.badge.auto-recovered { border-color: rgba(217, 119, 87, 0.4); color: var(--accent); background: var(--accent-bg); margin-left: 6px; }
+
+.providers-row td {
+  background: var(--bg-elev-2);
+  padding: 10px 14px;
+}
+.providers-table { width: 100%; font-size: 12px; }
+.providers-table th, .providers-table td { padding: 4px 8px; }
+
+.test-result {
+  margin-top: 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.test-result.error { color: var(--danger); }
 `;

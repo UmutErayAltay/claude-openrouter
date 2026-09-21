@@ -128,16 +128,21 @@ export interface AggregateOptions {
   recent?: number;
   /** Injectable for tests; defaults to the real clock. */
   now?: number;
+  /** Restrict every figure to this model's records, for the dashboard's filter. */
+  model?: string;
 }
 
 /** Pure aggregation — the caller supplies the records via readUsage(). */
 export function aggregateUsage(
-  records: UsageRecord[],
+  allRecords: UsageRecord[],
   options: AggregateOptions = {},
 ): UsageSummary {
   const days = options.days ?? 14;
   const recentCount = options.recent ?? 20;
   const now = options.now ?? Date.now();
+  const records = options.model
+    ? allRecords.filter((record) => record.model === options.model)
+    : allRecords;
 
   const totals = { requests: 0, cost: 0, promptTokens: 0, completionTokens: 0 };
   const byModel = new Map<string, UsageModelBucket>();

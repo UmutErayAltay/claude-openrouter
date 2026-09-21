@@ -133,6 +133,18 @@ describe("mergeModelEntry", () => {
     mergeModelEntry(base, { label: "changed" });
     expect(base).toEqual(original);
   });
+
+  it("clears autoRecovered when the user manually touches stream", () => {
+    const autoRecovered = { ...base, stream: false, autoRecovered: true };
+
+    expect(mergeModelEntry(autoRecovered, { stream: true }).autoRecovered).toBeUndefined();
+    expect(mergeModelEntry(autoRecovered, { stream: false }).autoRecovered).toBeUndefined();
+  });
+
+  it("leaves autoRecovered alone when the patch doesn't mention stream", () => {
+    const autoRecovered = { ...base, stream: false, autoRecovered: true };
+    expect(mergeModelEntry(autoRecovered, { label: "Y" }).autoRecovered).toBe(true);
+  });
 });
 
 describe("updateModel", () => {

@@ -41,6 +41,16 @@ const REFERENCED_IDS = [
   "syncBtn",
   "revertBtn",
   "toast",
+  "restartProxyBtn",
+  "stopProxyBtn",
+  "healthCard",
+  "healthList",
+  "creditProjection",
+  "recentModelFilter",
+  "syncStatusBadge",
+  "exportBtn",
+  "logAutoRefresh",
+  "logBox",
 ];
 
 describe("buildDashboardHtml", () => {

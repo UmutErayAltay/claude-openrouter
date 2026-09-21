@@ -8,6 +8,7 @@ import {
   configPath,
   findModel,
   loadConfig,
+  markModelNonStreaming,
   resolveOpenRouterKey,
   saveConfig,
   DEFAULT_CONFIG,
@@ -84,6 +85,27 @@ describe("findModel", () => {
     const config = { ...DEFAULT_CONFIG, models: [{ id: "openai/gpt-5" }] };
     expect(findModel(config, "openai/gpt-5")).toEqual({ id: "openai/gpt-5" });
     expect(findModel(config, "openai/gpt-4o")).toBeUndefined();
+  });
+});
+
+describe("markModelNonStreaming", () => {
+  it("sets stream:false and flags it as auto-recovered", () => {
+    saveConfig({ ...DEFAULT_CONFIG, models: [{ id: "x" }] });
+
+    expect(markModelNonStreaming("x")).toBe(true);
+    expect(loadConfig().models[0]).toEqual({ id: "x", stream: false, autoRecovered: true });
+  });
+
+  it("returns false and changes nothing for a model already non-streaming", () => {
+    saveConfig({ ...DEFAULT_CONFIG, models: [{ id: "x", stream: false }] });
+
+    expect(markModelNonStreaming("x")).toBe(false);
+    expect(loadConfig().models[0]).toEqual({ id: "x", stream: false });
+  });
+
+  it("returns false for a model that isn't configured", () => {
+    saveConfig({ ...DEFAULT_CONFIG, models: [] });
+    expect(markModelNonStreaming("missing")).toBe(false);
   });
 });
 

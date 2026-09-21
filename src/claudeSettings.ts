@@ -84,6 +84,26 @@ export function syncModelPicker(models: ModelEntry[]): { path: string; removed: 
   return { path, removed };
 }
 
+/**
+ * Whether `~/.claude/settings.json`'s modelPicker already matches what
+ * `syncModelPicker(models)` would write — so the dashboard can show "up to
+ * date" instead of a sync button whose effect is unclear.
+ */
+export function isModelPickerSynced(models: ModelEntry[]): boolean {
+  let current: unknown;
+  try {
+    current = readClaudeSettings().modelPicker;
+  } catch {
+    // A malformed settings file: sync would refuse to write anyway, so it
+    // isn't meaningfully "in sync" or "out of sync" — treat as out of sync
+    // so the UI surfaces that something needs attention.
+    return false;
+  }
+
+  if (models.length === 0) return current === undefined;
+  return JSON.stringify(current) === JSON.stringify(buildModelPicker(models));
+}
+
 /** Restores the file saved before the last sync. */
 export function revertModelPicker(): { path: string; restored: boolean } {
   const path = claudeSettingsPath();

@@ -24,13 +24,25 @@ export function buildDashboardHtml(): string {
     <span class="dot" id="statusDot"></span>
     <h1>claude-openrouter</h1>
   </div>
-  <div class="topbar-meta" id="statusMeta">yukleniyor...</div>
+  <div class="topbar-right">
+    <div class="topbar-meta" id="statusMeta">yukleniyor...</div>
+    <div class="actions">
+      <button id="restartProxyBtn" class="btn btn-secondary btn-small" type="button">Yeniden baslat</button>
+      <button id="stopProxyBtn" class="btn btn-danger btn-small" type="button">Durdur</button>
+    </div>
+  </div>
 </header>
 
 <main>
+  <section class="card" id="healthCard">
+    <h2>Saglik durumu</h2>
+    <ul class="health-list" id="healthList"><li class="empty-row">yukleniyor...</li></ul>
+  </section>
+
   <section class="card" id="creditCard">
     <h2>Kalan kredi</h2>
     <div id="creditBody">yukleniyor...</div>
+    <div class="credit-sub" id="creditProjection"></div>
   </section>
 
   <section class="card">
@@ -48,7 +60,12 @@ export function buildDashboardHtml(): string {
       </table>
     </section>
     <section class="card">
-      <h2>Son istekler</h2>
+      <div class="card-header">
+        <h2>Son istekler</h2>
+        <select id="recentModelFilter" class="filter-select">
+          <option value="">Tum modeller</option>
+        </select>
+      </div>
       <table>
         <thead><tr><th>Zaman</th><th>Model</th><th class="mono">Token</th><th class="mono">Maliyet</th></tr></thead>
         <tbody id="recentBody"><tr class="empty-row"><td colspan="4">yukleniyor...</td></tr></tbody>
@@ -60,8 +77,10 @@ export function buildDashboardHtml(): string {
     <div class="card-header">
       <h2>Ekli modeller</h2>
       <div class="actions">
+        <span class="badge" id="syncStatusBadge">-</span>
         <button id="syncBtn" class="btn" type="button">Menuye yaz</button>
         <button id="revertBtn" class="btn btn-secondary" type="button">Son sync'i geri al</button>
+        <a id="exportBtn" class="btn btn-secondary" href="/dashboard/api/export" download>Disa aktar</a>
       </div>
     </div>
     <table>
@@ -144,8 +163,8 @@ export function buildDashboardHtml(): string {
     <h2>Alt ajanlar</h2>
     <div class="hint" id="agentsHint"></div>
     <table>
-      <thead><tr><th>Ad</th><th>Kapsam</th><th>Model</th><th>Tool'lar</th></tr></thead>
-      <tbody id="agentsBody"><tr class="empty-row"><td colspan="4">yukleniyor...</td></tr></tbody>
+      <thead><tr><th>Ad</th><th>Kapsam</th><th>Model</th><th>Tool'lar</th><th></th></tr></thead>
+      <tbody id="agentsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
     </table>
     <form id="agentForm" class="agent-form">
       <label>Ad
@@ -162,6 +181,14 @@ export function buildDashboardHtml(): string {
       </label>
       <button type="submit" class="btn">Ajan olustur</button>
     </form>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Proxy loglari</h2>
+      <label class="log-toggle"><input type="checkbox" id="logAutoRefresh" checked> otomatik yenile</label>
+    </div>
+    <pre id="logBox" class="log-box">yukleniyor...</pre>
   </section>
 </main>
 

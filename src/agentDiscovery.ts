@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import { agentsDir } from "./agentTemplate.js";
 import { findModel, type Config } from "./config.js";
 
@@ -117,4 +117,30 @@ export function listAgents(config: Config): AgentSummary[] {
     agent.configured = Boolean(agent.model && findModel(config, agent.model));
   }
   return agents;
+}
+
+export class AgentOpError extends Error {}
+
+/**
+ * Deletes an agent file. This is reachable from the dashboard's HTTP API
+ * with a path the client supplies, so it re-derives an allowed set of paths
+ * (the two known agents directories) rather than trusting the input:
+ * without this, a crafted path could delete any file the process can reach.
+ */
+export function deleteAgent(file: string): void {
+  const allowedDirs = [agentsDir("project"), agentsDir("user")];
+  const resolved = resolve(file);
+
+  const withinAllowedDir = allowedDirs.some((dir) => {
+    const dirWithSep = dir.endsWith(sep) ? dir : dir + sep;
+    return resolved.startsWith(dirWithSep);
+  });
+  if (!withinAllowedDir || !resolved.endsWith(".md")) {
+    throw new AgentOpError(`Bu dosya silinemez: ${file}`);
+  }
+  if (!existsSync(resolved)) {
+    throw new AgentOpError(`Dosya bulunamadi: ${file}`);
+  }
+
+  unlinkSync(resolved);
 }
