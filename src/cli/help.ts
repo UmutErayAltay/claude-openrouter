@@ -41,6 +41,8 @@ Proxy
   stop                     Proxy'yi durdur
   status                   Durumu goster
   doctor                   Kurulumu bastan sona kontrol et
+  dashboard                Proxy'yi baslat, kullanim/kredi ve model yonetim
+                           arayuzunu tarayicida ac (http://127.0.0.1:<port>/dashboard)
 
 Ortam degiskenleri
   OPENROUTER_API_KEY       Anahtari diske yazmadan vermek icin
