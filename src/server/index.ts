@@ -9,6 +9,8 @@ import { passthroughToAnthropic } from "./anthropicPassthrough.js";
 import { handleOpenRouter } from "./openrouterHandler.js";
 import { forwardableHeaders, readBody, sendJson } from "./http.js";
 import type { UsageRecord } from "../usageLog.js";
+import { defaultDashboardDeps, handleDashboard, type DashboardDeps } from "./dashboardApi.js";
+import { buildDashboardHtml } from "./dashboardPage.js";
 
 export interface ProxyOptions {
   /** Re-read on every request so `cor add` takes effect without a restart. */
@@ -18,35 +20,42 @@ export interface ProxyOptions {
   markNonStreaming?: (modelId: string) => boolean;
   /** Overridable so tests don't write to the real usage log. */
   recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+  /** Overridable so tests don't touch the real Claude settings/agent files. */
+  dashboard?: Partial<DashboardDeps>;
+}
+
+interface HandleContext {
+  load: () => Config;
+  log: (message: string) => void;
+  markNonStreaming?: (modelId: string) => boolean;
+  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+  dashboardDeps: DashboardDeps;
 }
 
 export function createProxyServer(options: ProxyOptions = {}): Server {
-  const load = options.loadConfig ?? loadConfig;
-  const log = options.log ?? (() => {});
+  const context: HandleContext = {
+    load: options.loadConfig ?? loadConfig,
+    log: options.log ?? (() => {}),
+    markNonStreaming: options.markNonStreaming,
+    recordUsage: options.recordUsage,
+    dashboardDeps: { ...defaultDashboardDeps(), ...options.dashboard },
+  };
 
   return createServer((req, res) => {
-    void handle(req, res, load, log, options.markNonStreaming, options.recordUsage).catch(
-      (err: unknown) => {
-        log(`beklenmeyen hata: ${(err as Error).stack ?? String(err)}`);
-        if (!res.headersSent) {
-          sendJson(res, 500, anthropicError(500, `Proxy hatasi: ${(err as Error).message}`));
-        } else if (!res.writableEnded) {
-          res.end();
-        }
-      },
-    );
+    void handle(req, res, context).catch((err: unknown) => {
+      context.log(`beklenmeyen hata: ${(err as Error).stack ?? String(err)}`);
+      if (!res.headersSent) {
+        sendJson(res, 500, anthropicError(500, `Proxy hatasi: ${(err as Error).message}`));
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    });
   });
 }
 
-async function handle(
-  req: IncomingMessage,
-  res: ServerResponse,
-  load: () => Config,
-  log: (message: string) => void,
-  markNonStreaming?: (modelId: string) => boolean,
-  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void,
-): Promise<void> {
+async function handle(req: IncomingMessage, res: ServerResponse, context: HandleContext): Promise<void> {
   const path = (req.url ?? "/").split("?")[0] ?? "/";
+  const { load, log, markNonStreaming, recordUsage } = context;
 
   // Claude Code's connection-warming probe.
   if (req.method === "HEAD" && path === "/api/hello") {
@@ -60,6 +69,10 @@ async function handle(
   }
 
   const config = load();
+
+  if (path === "/dashboard" || path.startsWith("/dashboard/")) {
+    if (await handleDashboard(req, res, config, context.dashboardDeps, buildDashboardHtml)) return;
+  }
 
   if (req.method === "GET" && path === "/v1/models") {
     await handleModels(config, req, res);
