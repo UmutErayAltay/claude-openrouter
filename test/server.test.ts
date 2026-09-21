@@ -21,6 +21,8 @@ let respond: (path: string) => { status: number; headers: Record<string, string>
 /** Models the proxy asked to switch off streaming, instead of touching disk. */
 let marked: string[] = [];
 let streamlessModel = false;
+/** Usage entries the proxy recorded, instead of writing to the real log. */
+let recordedUsage: Record<string, unknown>[] = [];
 
 function config(): Config {
   return {
@@ -64,6 +66,9 @@ beforeAll(async () => {
       marked.push(modelId);
       return true;
     },
+    recordUsage: (entry) => {
+      recordedUsage.push(entry);
+    },
   });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
@@ -84,6 +89,7 @@ function jsonUpstream(body: unknown, status = 200) {
 
 function post(path: string, body: unknown, headers: Record<string, string> = {}) {
   captured = [];
+  recordedUsage = [];
   return fetch(`${proxyUrl}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
@@ -116,6 +122,31 @@ describe("proxy routing", () => {
       content: [{ type: "text", text: "merhaba" }],
       stop_reason: "end_turn",
     });
+  });
+
+  it("records cost and tokens for a non-streamed OpenRouter response", async () => {
+    respond = jsonUpstream({
+      id: "gen-1",
+      choices: [{ message: { content: "merhaba" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 5, completion_tokens: 2, cost: 0.0003 },
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(recordedUsage).toEqual([
+      {
+        model: "openai/gpt-5",
+        promptTokens: 5,
+        completionTokens: 2,
+        reasoningTokens: undefined,
+        cost: 0.0003,
+        stream: false,
+      },
+    ]);
   });
 
   it("passes a Claude model through with its credential and beta headers intact", async () => {
@@ -181,6 +212,56 @@ describe("proxy routing", () => {
     }
     expect(text).toContain('"text":"Mer"');
     expect(text).toContain('"text":"haba"');
+  });
+
+  it("records cost from the final chunk of a streamed response", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"id":"gen-2","choices":[{"delta":{"content":"Mer"}}]}\n\n' +
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}],' +
+        '"usage":{"prompt_tokens":9,"completion_tokens":2,"cost":0.0005}}\n\n' +
+        "data: [DONE]\n\n",
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(recordedUsage).toEqual([
+      {
+        model: "openai/gpt-5",
+        promptTokens: 9,
+        completionTokens: 2,
+        reasoningTokens: undefined,
+        cost: 0.0005,
+        stream: true,
+      },
+    ]);
+  });
+
+  it("records nothing when a mid-stream chunk reports an error", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"choices":[{"delta":{"content":"Mer"}}]}\n\n' +
+        'data: {"error":{"message":"upstream oldu"}}\n\n' +
+        "data: [DONE]\n\n",
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(recordedUsage).toEqual([]);
   });
 
   it("reports an OpenRouter failure in the Anthropic error shape", async () => {

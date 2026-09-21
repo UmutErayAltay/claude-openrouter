@@ -8,6 +8,7 @@ import { routeFor } from "../router.js";
 import { passthroughToAnthropic } from "./anthropicPassthrough.js";
 import { handleOpenRouter } from "./openrouterHandler.js";
 import { forwardableHeaders, readBody, sendJson } from "./http.js";
+import type { UsageRecord } from "../usageLog.js";
 
 export interface ProxyOptions {
   /** Re-read on every request so `cor add` takes effect without a restart. */
@@ -15,6 +16,8 @@ export interface ProxyOptions {
   log?: (message: string) => void;
   /** Overridable so tests don't write to the real config file. */
   markNonStreaming?: (modelId: string) => boolean;
+  /** Overridable so tests don't write to the real usage log. */
+  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
 }
 
 export function createProxyServer(options: ProxyOptions = {}): Server {
@@ -22,14 +25,16 @@ export function createProxyServer(options: ProxyOptions = {}): Server {
   const log = options.log ?? (() => {});
 
   return createServer((req, res) => {
-    void handle(req, res, load, log, options.markNonStreaming).catch((err: unknown) => {
-      log(`beklenmeyen hata: ${(err as Error).stack ?? String(err)}`);
-      if (!res.headersSent) {
-        sendJson(res, 500, anthropicError(500, `Proxy hatasi: ${(err as Error).message}`));
-      } else if (!res.writableEnded) {
-        res.end();
-      }
-    });
+    void handle(req, res, load, log, options.markNonStreaming, options.recordUsage).catch(
+      (err: unknown) => {
+        log(`beklenmeyen hata: ${(err as Error).stack ?? String(err)}`);
+        if (!res.headersSent) {
+          sendJson(res, 500, anthropicError(500, `Proxy hatasi: ${(err as Error).message}`));
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      },
+    );
   });
 }
 
@@ -39,6 +44,7 @@ async function handle(
   load: () => Config,
   log: (message: string) => void,
   markNonStreaming?: (modelId: string) => boolean,
+  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void,
 ): Promise<void> {
   const path = (req.url ?? "/").split("?")[0] ?? "/";
 
@@ -92,7 +98,7 @@ async function handle(
   }
 
   log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
-  await handleOpenRouter(config, route.entry, request, res, { log, markNonStreaming });
+  await handleOpenRouter(config, route.entry, request, res, { log, markNonStreaming, recordUsage });
 }
 
 /**
