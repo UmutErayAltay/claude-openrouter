@@ -4,13 +4,10 @@ import { existsSync } from "node:fs";
 import {
   configPath,
   findModel,
-  isProviderSort,
-  isReasoningEffort,
   loadConfig,
   logPath,
   resolveOpenRouterKey,
   saveConfig,
-  type ModelEntry,
 } from "../config.js";
 import {
   backupPath,
@@ -19,14 +16,10 @@ import {
   revertModelPicker,
   syncModelPicker,
 } from "../claudeSettings.js";
-import {
-  fetchCatalog,
-  fetchEndpoints,
-  searchCatalog,
-  shortDescription,
-} from "../openrouterCatalog.js";
+import { fetchCatalog, fetchEndpoints, searchCatalog } from "../openrouterCatalog.js";
 import { isPortAnswering, isRunning, readPid, startProxy, stopProxy } from "../proxyProcess.js";
 import { writeAgent } from "../agentTemplate.js";
+import { ModelOpError, addModel, removeModel, type ModelInput } from "../modelOps.js";
 import { HELP } from "./help.js";
 
 async function main(argv: string[]): Promise<number> {
@@ -53,6 +46,8 @@ async function main(argv: string[]): Promise<number> {
       return commandSync(rest);
     case "start":
       return commandStart();
+    case "dashboard":
+      return commandDashboard();
     case "stop":
       return commandStop();
     case "status":
@@ -111,73 +106,51 @@ async function commandAdd(args: string[]): Promise<number> {
     return 1;
   }
 
+  const input: ModelInput = {
+    label: values.label,
+    description: values.description,
+    contextTokens: values.context ? Number(values.context) : undefined,
+    maxOutputTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined,
+    behavesAs: values["behaves-as"],
+    stream: values["no-stream"] ? false : values.stream ? true : undefined,
+    reasoning: values.reasoning,
+    providerSort: values.cheapest ? "price" : values.sort,
+    maxPrice:
+      values["max-price-in"] || values["max-price-out"]
+        ? {
+            ...(values["max-price-in"] ? { prompt: Number(values["max-price-in"]) } : {}),
+            ...(values["max-price-out"] ? { completion: Number(values["max-price-out"]) } : {}),
+          }
+        : undefined,
+    quantizations: values.quantizations
+      ? values.quantizations.split(",").map((q) => q.trim()).filter(Boolean)
+      : undefined,
+  };
+
   const config = loadConfig();
-  if (findModel(config, id)) {
-    process.stderr.write(`${id} zaten ekli. Once 'cor remove ${id}' calistir.\n`);
+  let result;
+  try {
+    result = await addModel(config, id, input);
+  } catch (err) {
+    const message = (err as Error).message;
+    const hint = err instanceof ModelOpError && message.endsWith("zaten ekli.")
+      ? ` Once 'cor remove ${id}' calistir.`
+      : "";
+    process.stderr.write(`${message}${hint}\n`);
     return 1;
   }
 
-  const entry: ModelEntry = { id };
-  if (values.label) entry.label = values.label;
-  if (values.description) entry.description = values.description;
-  if (values.context) entry.contextTokens = Number(values.context);
-  if (values["max-tokens"]) entry.maxOutputTokens = Number(values["max-tokens"]);
-  if (values["behaves-as"]) entry.behavesAs = values["behaves-as"];
-  if (values["no-stream"]) entry.stream = false;
-  if (values.stream) entry.stream = true;
-  if (values.reasoning) {
-    if (!isReasoningEffort(values.reasoning)) {
-      process.stderr.write(
-        `Gecersiz --reasoning degeri: ${values.reasoning}. none, low, medium, high veya max.\n`,
-      );
-      return 1;
-    }
-    entry.reasoning = values.reasoning;
+  if (result.status === "not_found") {
+    process.stderr.write(
+      `Uyari: '${id}' OpenRouter katalogunda bulunamadi. 'cor search' ile dogru ID'yi arayabilirsin.\n`,
+    );
+  } else if (result.status === "catalog_error") {
+    process.stderr.write(`Uyari: katalog alinamadi (${result.errorMessage}).\n`);
   }
 
-  if (values.cheapest) entry.providerSort = "price";
-  if (values.sort) {
-    if (!isProviderSort(values.sort)) {
-      process.stderr.write(
-        `Gecersiz --sort degeri: ${values.sort}. price, throughput veya latency.\n`,
-      );
-      return 1;
-    }
-    entry.providerSort = values.sort;
-  }
-  if (values["max-price-in"] || values["max-price-out"]) {
-    entry.maxPrice = {
-      ...(values["max-price-in"] ? { prompt: Number(values["max-price-in"]) } : {}),
-      ...(values["max-price-out"] ? { completion: Number(values["max-price-out"]) } : {}),
-    };
-  }
-  if (values.quantizations) {
-    entry.quantizations = values.quantizations.split(",").map((q) => q.trim()).filter(Boolean);
-  }
-
-  // Fill the gaps from the OpenRouter catalog so the picker row and the
-  // context estimate are right without the user looking anything up.
-  try {
-    const catalog = await fetchCatalog(config);
-    const match = catalog.find((model) => model.id === id);
-    if (!match) {
-      process.stderr.write(
-        `Uyari: '${id}' OpenRouter katalogunda bulunamadi. 'cor search' ile dogru ID'yi arayabilirsin.\n`,
-      );
-    } else {
-      entry.label ??= match.name ?? id;
-      entry.description ??= shortDescription(match.description);
-      entry.contextTokens ??= match.contextLength;
-      entry.maxOutputTokens ??= match.maxCompletionTokens;
-    }
-  } catch (err) {
-    process.stderr.write(`Uyari: katalog alinamadi (${(err as Error).message}).\n`);
-  }
-
-  config.models.push(entry);
   saveConfig(config);
 
-  process.stdout.write(`Eklendi: ${entry.label ?? entry.id} (${entry.id})\n`);
+  process.stdout.write(`Eklendi: ${result.entry.label ?? result.entry.id} (${result.entry.id})\n`);
   process.stdout.write("Simdi 'cor sync' calistirip /model menusune yansit.\n");
   return 0;
 }
@@ -270,9 +243,7 @@ function commandRemove(args: string[]): number {
     return 1;
   }
   const config = loadConfig();
-  const before = config.models.length;
-  config.models = config.models.filter((model) => model.id !== id);
-  if (config.models.length === before) {
+  if (!removeModel(config, id)) {
     process.stderr.write(`${id} listede yok.\n`);
     return 1;
   }
@@ -350,6 +321,28 @@ async function commandStart(): Promise<number> {
 
 function commandStop(): number {
   process.stdout.write(stopProxy() ? "Proxy durduruldu.\n" : "Calisan proxy yok.\n");
+  return 0;
+}
+
+async function commandDashboard(): Promise<number> {
+  const { port } = await startProxy();
+  const url = `http://127.0.0.1:${port}/dashboard`;
+  // Printed before the open attempt: this often runs in a headless
+  // container, and the URL is the only thing that matters if opening fails.
+  process.stdout.write(`Dashboard: ${url}\n`);
+
+  const openCommand =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = spawn(openCommand, [url], { detached: true, stdio: "ignore" });
+    // A missing binary (common on Linux without a desktop environment) fails
+    // asynchronously; a plain try/catch around spawn() would not catch it.
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Opening is best-effort; the URL above is already enough.
+  }
+
   return 0;
 }
 

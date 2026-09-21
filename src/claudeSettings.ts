@@ -67,7 +67,10 @@ export function syncModelPicker(models: ModelEntry[]): { path: string; removed: 
   const path = claudeSettingsPath();
   const settings = readClaudeSettings();
 
-  if (existsSync(path)) copyFileSync(path, backupPath());
+  // Only the first sync takes a backup: the backup must stay the file as it
+  // was before cor ever touched it, or a second sync overwrites it with a
+  // cor-written file and `revert` no longer restores the original.
+  if (existsSync(path) && !existsSync(backupPath())) copyFileSync(path, backupPath());
 
   let removed = false;
   if (models.length === 0) {

@@ -96,6 +96,7 @@ Bir şey ters giderse: `cor doctor` her adımı tek tek kontrol eder, `~/.claude
 | `cor sync` | Modelleri `~/.claude/settings.json` içindeki `modelPicker`'a yaz |
 | `cor sync --revert` | Son `sync` öncesi haline döndür |
 | `cor agent [model-id]` | Tek dosyada çalışan alt ajan oluştur |
+| `cor dashboard` | Kullanım/kredi ve model yönetim arayüzünü tarayıcıda aç |
 | `cor start` / `stop` / `status` | Proxy'yi yönet |
 | `cor claude [...]` | Proxy'yi başlat ve `claude`'u çalıştır |
 | `cor doctor` | Kurulumu baştan sona kontrol et |
@@ -256,12 +257,30 @@ Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `cont
 
 ---
 
+## Dashboard
+
+```bash
+cor dashboard
+```
+
+Proxy'yi başlatır ve `http://127.0.0.1:<port>/dashboard`'ı açar (tarayıcıyı açmayı dener, başaramazsa URL'yi yine de yazdırır — başlıksız/konteyner ortamlarda beklenen davranış budur). Tek sayfa, dış bağımlılık yok, harici CDN yok:
+
+- **Kalan kredi**: OpenRouter'ın `/key` ucundan canlı — limit, kalan, günlük/haftalık/aylık kullanım. Anahtar geçersiz/eksik/erişilemez olduğunda bunu ayrı ayrı gösterir, dashboard'un geri kalanını etkilemez.
+- **Harcama**: son 14 günün grafiği, model bazında dökum, son istekler tablosu — hepsi `~/.claude-openrouter/usage.jsonl`'dan.
+- **Model yönetimi**: ekleme, düzenleme (reasoning, sağlayıcı sırası, kuantizasyon, `behaves-as`, akış), silme; katalogda arama-yaz; `cor sync`/`--revert` butonları.
+- **Alt ajanlar**: `.claude/agents/` içindeki (proje ve kullanıcı kapsamı) ajanları listeler, hangisinin senin yapılandırdığın bir modeli kullandığını işaretler; yeni ajan oluşturma formu.
+
+Mutasyon uçları (model ekle/sil, ajan yaz) sadece `127.0.0.1`/`localhost`'tan ve dashboard'un kendi origin'inden gelen isteklere açık — açık bıraktığın başka bir sekmenin sessizce buraya yazamaması için.
+
+---
+
 ## Dosyalar
 
 | Dosya | İçerik |
 |---|---|
 | `~/.claude-openrouter/config.json` | Anahtar, port, model listesi (izin `0600`) |
 | `~/.claude-openrouter/proxy.log` | Proxy günlüğü |
+| `~/.claude-openrouter/usage.jsonl` | Dashboard'un okuduğu kullanım kaydı (2MB'ı geçince otomatik kırpılır) |
 | `~/.claude/settings.json` | `cor sync` yalnızca `modelPicker` anahtarını yazar |
 | `~/.claude/settings.json.cor-bak` | Son `sync` öncesi yedek |
 
@@ -283,7 +302,7 @@ Temizlenenler: `cache_control`, `thinking` / adaptive reasoning, `effort`, `cont
 ## Geliştirme
 
 ```bash
-npm test          # 100 birim + uctan uca test
+npm test          # 172 birim + uctan uca test
 npm run typecheck
 npm run build
 ```

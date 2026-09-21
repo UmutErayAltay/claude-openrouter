@@ -96,6 +96,7 @@ If something goes wrong: `cor doctor` checks every step one by one, and `~/.clau
 | `cor sync` | Write the models into `~/.claude/settings.json`'s `modelPicker` |
 | `cor sync --revert` | Revert to the state before the last `sync` |
 | `cor agent [model-id]` | Generate a single-file subagent |
+| `cor dashboard` | Open the usage/credit and model management UI in a browser |
 | `cor start` / `stop` / `status` | Manage the proxy |
 | `cor claude [...]` | Start the proxy and run `claude` |
 | `cor doctor` | Check the whole setup end to end |
@@ -256,12 +257,30 @@ Stripped out: `cache_control`, `thinking` / adaptive reasoning, `effort`, `conte
 
 ---
 
+## Dashboard
+
+```bash
+cor dashboard
+```
+
+Starts the proxy and opens `http://127.0.0.1:<port>/dashboard` (it tries to open your browser, and prints the URL either way if that fails — the expected behavior in headless/container setups). A single page, no external dependencies, no CDN:
+
+- **Remaining credit**: live from OpenRouter's `/key` endpoint — limit, remaining, daily/weekly/monthly usage. When the key is invalid, missing, or unreachable it shows that state on its own, without breaking the rest of the dashboard.
+- **Spend**: a 14-day chart, a per-model breakdown, and a recent-requests table — all read from `~/.claude-openrouter/usage.jsonl`.
+- **Model management**: add, edit (reasoning, provider sort, quantizations, `behaves-as`, streaming), remove; search-to-add from the catalog; `cor sync`/`--revert` buttons.
+- **Subagents**: lists the agents under `.claude/agents/` (project and user scope), flags which ones use a model you've configured, and a form to create a new one.
+
+The mutating endpoints (add/remove a model, write an agent) only accept requests from `127.0.0.1`/`localhost` and the dashboard's own origin — so another tab you have open can't silently write to it.
+
+---
+
 ## Files
 
 | File | Contents |
 |---|---|
 | `~/.claude-openrouter/config.json` | Key, port, model list (permission `0600`) |
 | `~/.claude-openrouter/proxy.log` | Proxy log |
+| `~/.claude-openrouter/usage.jsonl` | Usage log the dashboard reads (auto-trimmed past 2MB) |
 | `~/.claude/settings.json` | `cor sync` only writes the `modelPicker` key |
 | `~/.claude/settings.json.cor-bak` | Backup from before the last `sync` |
 
@@ -283,7 +302,7 @@ Stripped out: `cache_control`, `thinking` / adaptive reasoning, `effort`, `conte
 ## Development
 
 ```bash
-npm test          # 100 unit + end-to-end tests
+npm test          # 172 unit + end-to-end tests
 npm run typecheck
 npm run build
 ```

@@ -32,6 +32,11 @@ export class StreamTranslator {
     return this.stopped;
   }
 
+  /** The usage object from the last chunk that carried one — cost included. */
+  get lastUsage(): OpenAIUsage | undefined {
+    return this.usage;
+  }
+
   chunk(chunk: OpenAIStreamChunk): string[] {
     const events: string[] = [];
     if (this.stopped) return events;

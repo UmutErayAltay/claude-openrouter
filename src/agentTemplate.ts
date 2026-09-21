@@ -10,12 +10,19 @@ export interface AgentOptions {
   label?: string;
 }
 
+/** The `.claude` directory for a scope — shared with agentDiscovery.ts. */
+export function claudeDir(scope: AgentOptions["scope"]): string {
+  return scope === "user"
+    ? (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"))
+    : join(process.cwd(), ".claude");
+}
+
+export function agentsDir(scope: AgentOptions["scope"]): string {
+  return join(claudeDir(scope), "agents");
+}
+
 export function agentPath(name: string, scope: AgentOptions["scope"]): string {
-  const base =
-    scope === "user"
-      ? (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"))
-      : join(process.cwd(), ".claude");
-  return join(base, "agents", `${name}.md`);
+  return join(agentsDir(scope), `${name}.md`);
 }
 
 /**

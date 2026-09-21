@@ -150,6 +150,9 @@ export interface OpenAIUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  /** Dollar cost of this request. OpenRouter includes it automatically. */
+  cost?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
 export interface OpenAIResponse {

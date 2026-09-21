@@ -16,7 +16,9 @@ import type {
   AnthropicTool,
   OpenAIResponse,
   OpenAIStreamChunk,
+  OpenAIUsage,
 } from "../translate/types.js";
+import { recordUsage as recordUsageToLog, type UsageRecord } from "../usageLog.js";
 import { sendJson } from "./http.js";
 
 /** Claude Code aborts a stream that sends no bytes for 300s; stay well under. */
@@ -26,6 +28,24 @@ export interface OpenRouterHandlerOptions {
   log?: (message: string) => void;
   /** Overridable so tests don't write to the real config file. */
   markNonStreaming?: (modelId: string) => boolean;
+  /** Overridable so tests don't write to the real usage log. */
+  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+}
+
+/** Maps an OpenRouter usage object to the shape the dashboard's log stores. */
+function toUsageEntry(
+  model: string,
+  usage: OpenAIUsage | undefined,
+  stream: boolean,
+): Omit<UsageRecord, "ts"> {
+  return {
+    model,
+    promptTokens: usage?.prompt_tokens ?? 0,
+    completionTokens: usage?.completion_tokens ?? 0,
+    reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens,
+    cost: usage?.cost ?? null,
+    stream,
+  };
 }
 
 export async function handleOpenRouter(
@@ -78,6 +98,8 @@ export async function handleOpenRouter(
     return;
   }
 
+  const record = options.recordUsage ?? recordUsageToLog;
+
   if (payload.stream) {
     await streamResponse(upstream, request.model, res, {
       // Only a turn that offered tools can reveal the failure.
@@ -85,6 +107,7 @@ export async function handleOpenRouter(
       modelId: entry.id,
       log: options.log ?? (() => {}),
       markNonStreaming: options.markNonStreaming ?? markModelNonStreaming,
+      recordUsage: record,
     });
     return;
   }
@@ -94,6 +117,10 @@ export async function handleOpenRouter(
     sendJson(res, 502, anthropicError(502, `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`));
     return;
   }
+
+  // Recorded here rather than after recovery: cost and token counts describe
+  // what OpenRouter actually billed, unaffected by how we interpret the text.
+  record(toUsageEntry(entry.id, raw.usage, false));
 
   // Models that write tool calls as prose are turned back into ordinary
   // tool-calling responses here, before anything else looks at them.
@@ -125,6 +152,7 @@ interface StreamContext {
   modelId: string;
   log: (message: string) => void;
   markNonStreaming: (modelId: string) => boolean;
+  recordUsage: (entry: Omit<UsageRecord, "ts">) => void;
 }
 
 async function streamResponse(
@@ -240,6 +268,9 @@ async function streamResponse(
     }
 
     for (const event of translator.finish()) res.write(event);
+    // Recorded on the success path only: an error or an aborted stream
+    // reaches its own return/catch above and never gets here.
+    context.recordUsage(toUsageEntry(context.modelId, translator.lastUsage, true));
   } catch (err) {
     if (!res.writableEnded) {
       res.write(sseEvent("error", anthropicError(500, `Akis kesildi: ${(err as Error).message}`)));
