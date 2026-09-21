@@ -66,6 +66,17 @@ describe("syncModelPicker", () => {
     expect((settings.modelPicker as { options: unknown[] }).options).toHaveLength(1);
   });
 
+  it("keeps the original backup across a second sync", () => {
+    writeSettings({ model: "opus", theme: "dark" });
+    syncModelPicker([{ id: "openai/gpt-5" }]);
+    // A later sync must not overwrite the backup with a cor-written file —
+    // the backup has to stay "before cor ever touched this" for revert to work.
+    syncModelPicker([{ id: "openai/gpt-5" }, { id: "qwen/qwen3-max" }]);
+
+    revertModelPicker();
+    expect(readSettings()).toEqual({ model: "opus", theme: "dark" });
+  });
+
   it("creates the file when there are no settings yet", () => {
     syncModelPicker([{ id: "openai/gpt-5" }]);
     expect(readSettings().modelPicker).toBeDefined();
