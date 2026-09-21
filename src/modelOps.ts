@@ -88,6 +88,9 @@ export function mergeModelEntry(existing: ModelEntry, patch: ModelInput): ModelE
   apply("maxOutputTokens", patch.maxOutputTokens ?? undefined);
   apply("behavesAs", patch.behavesAs ?? undefined);
   apply("stream", patch.stream ?? undefined);
+  // A manual edit to `stream` is the user acknowledging the model, whichever
+  // way they set it — the "auto-recovered" badge no longer applies.
+  if (patch.stream !== undefined) delete merged.autoRecovered;
   apply("maxPrice", patch.maxPrice ?? undefined);
   apply("quantizations", patch.quantizations);
 

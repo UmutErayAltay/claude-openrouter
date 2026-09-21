@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderAgent } from "../src/agentTemplate.js";
-import { listAgents, parseAgentFrontmatter } from "../src/agentDiscovery.js";
+import {
+  AgentOpError,
+  deleteAgent,
+  listAgents,
+  parseAgentFrontmatter,
+} from "../src/agentDiscovery.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 
 let projectDir: string;
@@ -143,5 +148,58 @@ describe("listAgents", () => {
     mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
     writeFileSync(join(projectDir, ".claude", "agents", "notes.txt"), "not an agent");
     expect(listAgents(config())).toEqual([]);
+  });
+});
+
+describe("deleteAgent", () => {
+  it("deletes an agent file inside the project agents directory", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "kodcu.md");
+    writeFileSync(file, renderAgent({ name: "kodcu", modelId: "x", scope: "project" }));
+
+    deleteAgent(file);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("deletes an agent file inside the user agents directory", () => {
+    mkdirSync(join(userDir, "agents"), { recursive: true });
+    const file = join(userDir, "agents", "kodcu.md");
+    writeFileSync(file, renderAgent({ name: "kodcu", modelId: "x", scope: "user" }));
+
+    deleteAgent(file);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("refuses a path outside the known agents directories", () => {
+    const outside = join(projectDir, "not-an-agents-dir.md");
+    writeFileSync(outside, "junk");
+
+    expect(() => deleteAgent(outside)).toThrow(AgentOpError);
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  it("refuses a path-traversal attempt through an agents directory", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const secret = join(projectDir, "secret.md");
+    writeFileSync(secret, "do not delete me");
+
+    const traversal = join(projectDir, ".claude", "agents", "..", "..", "secret.md");
+    expect(() => deleteAgent(traversal)).toThrow(AgentOpError);
+    expect(existsSync(secret)).toBe(true);
+  });
+
+  it("refuses a non-.md file even inside an agents directory", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "notes.txt");
+    writeFileSync(file, "junk");
+
+    expect(() => deleteAgent(file)).toThrow(AgentOpError);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("reports a clear error for a file that doesn't exist", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "missing.md");
+    expect(() => deleteAgent(file)).toThrow(AgentOpError);
   });
 });

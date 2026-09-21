@@ -139,4 +139,16 @@ describe("aggregateUsage", () => {
     const summary = aggregateUsage(records, { recent: 2, now });
     expect(summary.recent.map((record) => record.ts)).toEqual([now + 4, now + 3]);
   });
+
+  it("restricts every figure to one model when `model` is given", () => {
+    const records = [
+      { ts: now, model: "a", promptTokens: 10, completionTokens: 5, cost: 0.1, stream: true },
+      { ts: now, model: "b", promptTokens: 20, completionTokens: 10, cost: 0.5, stream: true },
+    ];
+
+    const summary = aggregateUsage(records, { now, model: "a" });
+    expect(summary.totals).toEqual({ requests: 1, cost: 0.1, promptTokens: 10, completionTokens: 5 });
+    expect(summary.byModel.map((bucket) => bucket.model)).toEqual(["a"]);
+    expect(summary.recent).toHaveLength(1);
+  });
 });

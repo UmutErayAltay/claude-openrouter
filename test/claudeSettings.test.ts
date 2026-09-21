@@ -6,6 +6,7 @@ import {
   backupPath,
   buildModelPicker,
   claudeSettingsPath,
+  isModelPickerSynced,
   readClaudeSettings,
   revertModelPicker,
   syncModelPicker,
@@ -101,6 +102,32 @@ describe("syncModelPicker", () => {
   it("treats an empty settings file as empty settings", () => {
     writeFileSync(claudeSettingsPath(), "   ");
     expect(readClaudeSettings()).toEqual({});
+  });
+});
+
+describe("isModelPickerSynced", () => {
+  it("is false before any sync has happened", () => {
+    writeSettings({ model: "opus" });
+    expect(isModelPickerSynced([{ id: "openai/gpt-5" }])).toBe(false);
+  });
+
+  it("is true right after a sync, false once the model list changes", () => {
+    writeSettings({ model: "opus" });
+    syncModelPicker([{ id: "openai/gpt-5" }]);
+
+    expect(isModelPickerSynced([{ id: "openai/gpt-5" }])).toBe(true);
+    expect(isModelPickerSynced([{ id: "openai/gpt-5" }, { id: "qwen/qwen3-max" }])).toBe(false);
+  });
+
+  it("is true for an empty list once modelPicker has been removed", () => {
+    writeSettings({ model: "opus", modelPicker: { options: [{ model: "x" }] } });
+    syncModelPicker([]);
+    expect(isModelPickerSynced([])).toBe(true);
+  });
+
+  it("treats a malformed settings file as out of sync rather than throwing", () => {
+    writeFileSync(claudeSettingsPath(), "{ bozuk");
+    expect(isModelPickerSynced([{ id: "openai/gpt-5" }])).toBe(false);
   });
 });
 

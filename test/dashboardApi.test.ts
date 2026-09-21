@@ -5,6 +5,7 @@ import { createProxyServer } from "../src/server/index.js";
 import { DEFAULT_CONFIG, type Config, type ModelEntry } from "../src/config.js";
 import type { AgentOptions } from "../src/agentTemplate.js";
 import type { AgentSummary } from "../src/agentDiscovery.js";
+import type { TestModelResult } from "../src/modelTest.js";
 import type { UsageRecord } from "../src/usageLog.js";
 
 let upstream: Server;
@@ -20,8 +21,16 @@ let syncCalls: ModelEntry[][];
 let revertCalls: number;
 let fakeAgents: AgentSummary[];
 let writtenAgents: { name: string; modelId: string; scope: AgentOptions["scope"] }[];
+let deletedAgentFiles: string[];
 let fakeUsage: UsageRecord[];
+let dashboardRecorded: Omit<UsageRecord, "ts">[];
 let fakeNow: number;
+let syncedFlag: boolean;
+let fakeLogLines: string[];
+let testModelResponse: TestModelResult;
+let stopCalls: number;
+let restartCalls: number;
+let requestedLogLines: number[];
 
 function config(): Config {
   return {
@@ -89,6 +98,33 @@ beforeAll(async () => {
         writtenAgents.push({ name: options.name, modelId: options.modelId, scope: options.scope });
         return { path: `/fake/.claude/agents/${options.name}.md`, overwritten: false };
       },
+      deleteAgent: (file) => {
+        deletedAgentFiles.push(file);
+      },
+      isModelPickerSynced: () => syncedFlag,
+      recordUsage: (entry) => {
+        dashboardRecorded.push(entry);
+      },
+      testModel: async (_cfg, entry, recordUsage) => {
+        recordUsage({
+          model: entry.id,
+          promptTokens: 1,
+          completionTokens: 1,
+          cost: 0,
+          stream: false,
+        });
+        return testModelResponse;
+      },
+      tailLog: (maxLines) => {
+        requestedLogLines.push(maxLines);
+        return fakeLogLines;
+      },
+      stopProcess: () => {
+        stopCalls += 1;
+      },
+      restartProcess: () => {
+        restartCalls += 1;
+      },
       now: () => fakeNow,
     },
   });
@@ -126,8 +162,16 @@ beforeEach(() => {
   revertCalls = 0;
   fakeAgents = [];
   writtenAgents = [];
+  deletedAgentFiles = [];
   fakeUsage = [];
+  dashboardRecorded = [];
   fakeNow = new Date("2026-09-21T12:00:00Z").getTime();
+  syncedFlag = true;
+  fakeLogLines = ["[2026-09-21T12:00:00.000Z] proxy dinliyor: http://127.0.0.1:8787"];
+  testModelResponse = { ok: true, text: "merhaba", latencyMs: 42, promptTokens: 5, completionTokens: 2, cost: 0.0001 };
+  stopCalls = 0;
+  restartCalls = 0;
+  requestedLogLines = [];
 });
 
 async function getJson(path: string, headers: Record<string, string> = {}) {
@@ -309,6 +353,140 @@ describe("agents", () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ overwritten: false });
     expect(writtenAgents).toEqual([{ name: "kodcu", modelId: "openai/gpt-5", scope: "project" }]);
+  });
+});
+
+describe("GET /dashboard/api/status", () => {
+  it("reports whether the model picker is synced", async () => {
+    syncedFlag = false;
+    const { body } = await getJson("/dashboard/api/status");
+    expect(body.synced).toBe(false);
+  });
+});
+
+describe("GET /dashboard/api/health", () => {
+  it("reports every check ok when everything is fine", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    syncedFlag = true;
+
+    const { status, body } = await getJson("/dashboard/api/health");
+    expect(status).toBe(200);
+    const checks = body.checks as { id: string; ok: boolean }[];
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(checks.map((check) => check.id).sort()).toEqual(["credit", "key", "models", "synced"]);
+  });
+
+  it("flags the relevant checks as failing", async () => {
+    models = [];
+    hasKey = false;
+    syncedFlag = false;
+
+    const { body } = await getJson("/dashboard/api/health");
+    const checks = body.checks as { id: string; ok: boolean; hint?: string }[];
+    const byId = Object.fromEntries(checks.map((check) => [check.id, check]));
+    expect(byId.key?.ok).toBe(false);
+    expect(byId.models?.ok).toBe(false);
+    expect(byId.synced?.ok).toBe(false);
+    expect(byId.credit?.ok).toBe(false);
+    expect(byId.key?.hint).toBeTruthy();
+  });
+});
+
+describe("GET /dashboard/api/logs", () => {
+  it("returns the injected tail", async () => {
+    fakeLogLines = ["birinci satir", "ikinci satir"];
+    const { body } = await getJson("/dashboard/api/logs?lines=50");
+    expect(body).toEqual({ lines: fakeLogLines });
+  });
+
+  it("caps an absurd line count before it reaches tailLog", async () => {
+    const { status } = await getJson("/dashboard/api/logs?lines=999999");
+    expect(status).toBe(200);
+    expect(requestedLogLines).toEqual([2000]);
+  });
+});
+
+describe("GET /dashboard/api/export", () => {
+  it("serves the model list as a downloadable JSON file", async () => {
+    models = [{ id: "openai/gpt-5", label: "GPT-5" }];
+    const response = await fetch(`${proxyUrl}/dashboard/api/export`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("attachment");
+    expect(await response.json()).toEqual({ models });
+  });
+});
+
+describe("POST /dashboard/api/models/test", () => {
+  it("runs the injected test and returns its result", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    testModelResponse = {
+      ok: true,
+      text: "merhaba dunya",
+      latencyMs: 120,
+      promptTokens: 10,
+      completionTokens: 4,
+      cost: 0.0003,
+    };
+
+    const { status, body } = await postJson("/dashboard/api/models/test", { id: "openai/gpt-5" });
+    expect(status).toBe(200);
+    expect(body).toEqual(testModelResponse);
+  });
+
+  it("400s for a model that isn't configured", async () => {
+    const { status } = await postJson("/dashboard/api/models/test", { id: "missing" });
+    expect(status).toBe(400);
+  });
+
+  it("passes the dashboard's own recordUsage through to the test call", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    await postJson("/dashboard/api/models/test", { id: "openai/gpt-5" });
+    expect(dashboardRecorded).toEqual([
+      { model: "openai/gpt-5", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+    ]);
+  });
+});
+
+describe("POST /dashboard/api/agents/delete", () => {
+  it("deletes the given file", async () => {
+    const { status, body } = await postJson("/dashboard/api/agents/delete", {
+      file: "/fake/.claude/agents/kodcu.md",
+    });
+    expect(status).toBe(200);
+    expect(body).toEqual({ deleted: true });
+    expect(deletedAgentFiles).toEqual(["/fake/.claude/agents/kodcu.md"]);
+  });
+
+  it("400s when no file is given", async () => {
+    const { status } = await postJson("/dashboard/api/agents/delete", {});
+    expect(status).toBe(400);
+  });
+});
+
+describe("proxy control", () => {
+  it("responds to a stop request and then calls stopProcess", async () => {
+    const response = await fetch(`${proxyUrl}/dashboard/api/proxy/stop`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stopping: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(stopCalls).toBe(1);
+  });
+
+  it("responds to a restart request and then calls restartProcess", async () => {
+    const response = await fetch(`${proxyUrl}/dashboard/api/proxy/restart`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ restarting: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(restartCalls).toBe(1);
   });
 });
 

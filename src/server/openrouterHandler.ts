@@ -33,7 +33,7 @@ export interface OpenRouterHandlerOptions {
 }
 
 /** Maps an OpenRouter usage object to the shape the dashboard's log stores. */
-function toUsageEntry(
+export function toUsageEntry(
   model: string,
   usage: OpenAIUsage | undefined,
   stream: boolean,
