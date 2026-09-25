@@ -92,6 +92,7 @@ describe("aggregateUsage", () => {
       cost: 0.55,
       promptTokens: 120,
       completionTokens: 60,
+      cachedTokens: 0,
     });
     const today = summary.daily.find((bucket) => bucket.date === "2026-09-20");
     const yesterday = summary.daily.find((bucket) => bucket.date === "2026-09-19");
@@ -147,8 +148,33 @@ describe("aggregateUsage", () => {
     ];
 
     const summary = aggregateUsage(records, { now, model: "a" });
-    expect(summary.totals).toEqual({ requests: 1, cost: 0.1, promptTokens: 10, completionTokens: 5 });
+    expect(summary.totals).toEqual({
+      requests: 1,
+      cost: 0.1,
+      promptTokens: 10,
+      completionTokens: 5,
+      cachedTokens: 0,
+    });
     expect(summary.byModel.map((bucket) => bucket.model)).toEqual(["a"]);
     expect(summary.recent).toHaveLength(1);
+  });
+
+  it("sums cachedTokens into totals and the per-model bucket, treating a missing value as zero", () => {
+    const records = [
+      {
+        ts: now,
+        model: "a",
+        promptTokens: 100,
+        completionTokens: 10,
+        cachedTokens: 60,
+        cost: 0.01,
+        stream: true,
+      },
+      { ts: now, model: "a", promptTokens: 100, completionTokens: 10, cost: 0.01, stream: true },
+    ];
+
+    const summary = aggregateUsage(records, { now });
+    expect(summary.totals.cachedTokens).toBe(60);
+    expect(summary.byModel[0]).toMatchObject({ model: "a", cachedTokens: 60 });
   });
 });

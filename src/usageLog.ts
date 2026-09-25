@@ -17,6 +17,8 @@ export interface UsageRecord {
   promptTokens: number;
   completionTokens: number;
   reasoningTokens?: number;
+  /** Prompt tokens served from a provider's cache, when it supports one. */
+  cachedTokens?: number;
   /** null when the upstream response didn't carry a cost figure. */
   cost: number | null;
   stream: boolean;
@@ -34,10 +36,17 @@ export interface UsageModelBucket {
   cost: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
 }
 
 export interface UsageSummary {
-  totals: { requests: number; cost: number; promptTokens: number; completionTokens: number };
+  totals: {
+    requests: number;
+    cost: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  };
   byModel: UsageModelBucket[];
   daily: UsageDailyBucket[];
   recent: UsageRecord[];
@@ -144,7 +153,13 @@ export function aggregateUsage(
     ? allRecords.filter((record) => record.model === options.model)
     : allRecords;
 
-  const totals = { requests: 0, cost: 0, promptTokens: 0, completionTokens: 0 };
+  const totals = {
+    requests: 0,
+    cost: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+  };
   const byModel = new Map<string, UsageModelBucket>();
   const byDay = new Map<string, UsageDailyBucket>();
 
@@ -153,6 +168,7 @@ export function aggregateUsage(
     totals.cost += record.cost ?? 0;
     totals.promptTokens += record.promptTokens;
     totals.completionTokens += record.completionTokens;
+    totals.cachedTokens += record.cachedTokens ?? 0;
 
     const modelBucket = byModel.get(record.model) ?? {
       model: record.model,
@@ -160,11 +176,13 @@ export function aggregateUsage(
       cost: 0,
       promptTokens: 0,
       completionTokens: 0,
+      cachedTokens: 0,
     };
     modelBucket.requests += 1;
     modelBucket.cost += record.cost ?? 0;
     modelBucket.promptTokens += record.promptTokens;
     modelBucket.completionTokens += record.completionTokens;
+    modelBucket.cachedTokens += record.cachedTokens ?? 0;
     byModel.set(record.model, modelBucket);
 
     const key = dayKey(record.ts);
@@ -193,6 +211,7 @@ export function aggregateUsage(
       cost: Math.round(totals.cost * 1e6) / 1e6,
       promptTokens: totals.promptTokens,
       completionTokens: totals.completionTokens,
+      cachedTokens: totals.cachedTokens,
     },
     byModel: sortedByModel.map((bucket) => ({
       ...bucket,

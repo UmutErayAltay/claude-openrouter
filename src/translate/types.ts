@@ -153,6 +153,8 @@ export interface OpenAIUsage {
   /** Dollar cost of this request. OpenRouter includes it automatically. */
   cost?: number;
   completion_tokens_details?: { reasoning_tokens?: number };
+  /** Prompt tokens served from a provider's cache, when it supports one. */
+  prompt_tokens_details?: { cached_tokens?: number };
 }
 
 export interface OpenAIResponse {

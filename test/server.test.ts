@@ -149,6 +149,27 @@ describe("proxy routing", () => {
     ]);
   });
 
+  it("records cached tokens for a non-streamed response that reports them", async () => {
+    respond = jsonUpstream({
+      id: "gen-1",
+      choices: [{ message: { content: "merhaba" }, finish_reason: "stop" }],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 2,
+        cost: 0.0003,
+        prompt_tokens_details: { cached_tokens: 80 },
+      },
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(recordedUsage[0]).toMatchObject({ promptTokens: 100, cachedTokens: 80 });
+  });
+
   it("passes a Claude model through with its credential and beta headers intact", async () => {
     respond = jsonUpstream({ id: "msg_1", type: "message", content: [] });
 
@@ -242,6 +263,27 @@ describe("proxy routing", () => {
         stream: true,
       },
     ]);
+  });
+
+  it("records cached tokens from the final chunk of a streamed response", async () => {
+    respond = () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body:
+        'data: {"id":"gen-2","choices":[{"delta":{"content":"Mer"}}]}\n\n' +
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}],' +
+        '"usage":{"prompt_tokens":100,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":75}}}\n\n' +
+        "data: [DONE]\n\n",
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      stream: true,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    expect(recordedUsage[0]).toMatchObject({ promptTokens: 100, cachedTokens: 75 });
   });
 
   it("records nothing when a mid-stream chunk reports an error", async () => {

@@ -43,6 +43,7 @@ export function toUsageEntry(
     promptTokens: usage?.prompt_tokens ?? 0,
     completionTokens: usage?.completion_tokens ?? 0,
     reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens,
+    cachedTokens: usage?.prompt_tokens_details?.cached_tokens,
     cost: usage?.cost ?? null,
     stream,
   };

@@ -280,6 +280,9 @@ export const DASHBOARD_JS = `
     totals.appendChild(stat("Toplam istek", String(usage.totals.requests)));
     totals.appendChild(stat("Girdi token", fmtNum(usage.totals.promptTokens)));
     totals.appendChild(stat("Cikti token", fmtNum(usage.totals.completionTokens)));
+    if (usage.totals.cachedTokens) {
+      totals.appendChild(stat("Onbellekten", fmtNum(usage.totals.cachedTokens)));
+    }
 
     var byModelRows = usage.byModel.map(function (m) {
       var tr = document.createElement("tr");
@@ -294,7 +297,9 @@ export const DASHBOARD_JS = `
       var tr = document.createElement("tr");
       tr.appendChild(td(fmtDate(r.ts)));
       tr.appendChild(td(r.model, "mono"));
-      tr.appendChild(td(fmtNum(r.promptTokens) + " / " + fmtNum(r.completionTokens), "mono"));
+      var tokenCell = fmtNum(r.promptTokens) + " / " + fmtNum(r.completionTokens);
+      if (r.cachedTokens) tokenCell += " (" + fmtNum(r.cachedTokens) + " onbellek)";
+      tr.appendChild(td(tokenCell, "mono"));
       tr.appendChild(td(fmtMoney(r.cost), "mono"));
       return tr;
     });
