@@ -10,6 +10,7 @@ import {
   mergeModelEntry,
   removeModel,
   updateModel,
+  validateModelEntry,
 } from "../src/modelOps.js";
 
 function config(models: Config["models"] = [], overrides: Partial<Config> = {}): Config {
@@ -95,6 +96,48 @@ describe("buildModelEntry", () => {
   it("leaves empty quantizations unset", () => {
     expect(buildModelEntry("x", { quantizations: [] })).toEqual({ id: "x" });
   });
+
+  it("splits a single space-separated quantizations argument instead of storing it whole", () => {
+    // The exact historical bug: `--quantizations "fp8 bf16 fp16"` arrives as
+    // CLI/dashboard code split only on comma → one element, ["fp8 bf16 fp16"],
+    // which OpenRouter rejected with `provider.quantizations.0: Invalid option`.
+    const entry = buildModelEntry("x", { quantizations: ["fp8 bf16 fp16"] });
+    expect(entry.quantizations).toEqual(["fp8", "bf16", "fp16"]);
+  });
+
+  it("normalizes case, dedupes, and accepts a mix of comma and space separators", () => {
+    const entry = buildModelEntry("x", { quantizations: ["FP8, bf16", "fp8 fp16"] });
+    expect(entry.quantizations).toEqual(["fp8", "bf16", "fp16"]);
+  });
+
+  it("rejects an unknown quantization value", () => {
+    expect(() => buildModelEntry("x", { quantizations: ["fp99"] })).toThrow(ModelOpError);
+    expect(() => buildModelEntry("x", { quantizations: ["fp99"] })).toThrow(
+      /Gecersiz quantization/,
+    );
+  });
+
+  it("rejects a non-integer contextTokens (the `--context abc` -> NaN bug)", () => {
+    expect(() => buildModelEntry("x", { contextTokens: Number.NaN })).toThrow(ModelOpError);
+    expect(() => buildModelEntry("x", { contextTokens: -1 })).toThrow(ModelOpError);
+    expect(() => buildModelEntry("x", { contextTokens: 1.5 })).toThrow(ModelOpError);
+  });
+
+  it("rejects a non-integer maxOutputTokens", () => {
+    expect(() => buildModelEntry("x", { maxOutputTokens: Number.NaN })).toThrow(ModelOpError);
+  });
+
+  it("accepts valid positive integer context/maxOutputTokens", () => {
+    const entry = buildModelEntry("x", { contextTokens: 128000, maxOutputTokens: 8000 });
+    expect(entry).toMatchObject({ contextTokens: 128000, maxOutputTokens: 8000 });
+  });
+
+  it("rejects a negative or non-finite maxPrice", () => {
+    expect(() => buildModelEntry("x", { maxPrice: { prompt: -1 } })).toThrow(ModelOpError);
+    expect(() => buildModelEntry("x", { maxPrice: { completion: Number.NaN } })).toThrow(
+      ModelOpError,
+    );
+  });
 });
 
 describe("mergeModelEntry", () => {
@@ -144,6 +187,65 @@ describe("mergeModelEntry", () => {
   it("leaves autoRecovered alone when the patch doesn't mention stream", () => {
     const autoRecovered = { ...base, stream: false, autoRecovered: true };
     expect(mergeModelEntry(autoRecovered, { label: "Y" }).autoRecovered).toBe(true);
+  });
+
+  it("normalizes a space-separated quantizations patch the same way as buildModelEntry", () => {
+    const merged = mergeModelEntry(base, { quantizations: ["fp8 bf16 fp16"] });
+    expect(merged.quantizations).toEqual(["fp8", "bf16", "fp16"]);
+  });
+
+  it("rejects an invalid quantizations value in a patch", () => {
+    expect(() => mergeModelEntry(base, { quantizations: ["fp99"] })).toThrow(ModelOpError);
+  });
+
+  it("rejects a NaN contextTokens patch", () => {
+    expect(() => mergeModelEntry(base, { contextTokens: Number.NaN })).toThrow(ModelOpError);
+  });
+});
+
+describe("validateModelEntry", () => {
+  it("reports no problems for a valid entry", () => {
+    expect(
+      validateModelEntry({
+        id: "x",
+        quantizations: ["fp8", "bf16"],
+        reasoning: "high",
+        providerSort: "price",
+        contextTokens: 128000,
+        maxOutputTokens: 8000,
+        maxPrice: { prompt: 1, completion: 2 },
+      }),
+    ).toEqual([]);
+  });
+
+  it("catches the historical bad-config shape: quantizations stored as one space-separated string", () => {
+    const problems = validateModelEntry({ id: "x", quantizations: ["fp8 bf16 fp16"] });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/quantizations gecersiz/);
+  });
+
+  it("catches an invalid reasoning/providerSort written directly into config.json", () => {
+    const problems = validateModelEntry({
+      id: "x",
+      // Cast past the type system the way a hand-edited config.json would.
+      reasoning: "ultra" as never,
+      providerSort: "cheapest" as never,
+    });
+    expect(problems).toHaveLength(2);
+  });
+
+  it("catches non-integer contextTokens/maxOutputTokens", () => {
+    const problems = validateModelEntry({
+      id: "x",
+      contextTokens: Number.NaN,
+      maxOutputTokens: -5,
+    });
+    expect(problems).toHaveLength(2);
+  });
+
+  it("catches a negative maxPrice", () => {
+    const problems = validateModelEntry({ id: "x", maxPrice: { prompt: -1 } });
+    expect(problems).toEqual([expect.stringMatching(/maxPrice\.prompt gecersiz/)]);
   });
 });
 

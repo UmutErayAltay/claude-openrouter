@@ -25,6 +25,28 @@ export function isReasoningEffort(value: string): value is ReasoningEffort {
   return (REASONING_EFFORTS as readonly string[]).includes(value);
 }
 
+/** OpenRouter's provider-routing quantization filter values. */
+export const QUANTIZATIONS = [
+  "int4",
+  "int8",
+  "fp4",
+  "mxfp4",
+  "nvfp4",
+  "fp6",
+  "fp8",
+  "mxfp8",
+  "fp16",
+  "bf16",
+  "fp32",
+  "unknown",
+] as const;
+
+export type Quantization = (typeof QUANTIZATIONS)[number];
+
+export function isQuantization(value: string): value is Quantization {
+  return (QUANTIZATIONS as readonly string[]).includes(value);
+}
+
 /** A model served through OpenRouter that the user added to the picker. */
 export interface ModelEntry {
   /** OpenRouter model id, e.g. "openai/gpt-5". Sent verbatim to OpenRouter. */

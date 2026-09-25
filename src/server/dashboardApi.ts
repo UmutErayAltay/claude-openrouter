@@ -23,7 +23,14 @@ import {
   syncModelPicker as syncModelPickerImpl,
 } from "../claudeSettings.js";
 import { fetchCatalog, fetchEndpoints, searchCatalog } from "../openrouterCatalog.js";
-import { addModel, ModelOpError, removeModel, updateModel, type ModelInput } from "../modelOps.js";
+import {
+  addModel,
+  ModelOpError,
+  removeModel,
+  updateModel,
+  validateModelEntry,
+  type ModelInput,
+} from "../modelOps.js";
 import { testModel as testModelImpl, type TestModelResult } from "../modelTest.js";
 import { tailLines } from "../logTail.js";
 import { spawnReplacementProxy } from "../proxyProcess.js";
@@ -288,6 +295,9 @@ export async function handleDashboard(
     const credit = await fetchCreditInfo(config);
     const keySource = process.env.OPENROUTER_API_KEY ? "env" : config.openrouterApiKey ? "config" : "none";
     const synced = deps.isModelPickerSynced(config.models);
+    const modelProblems = config.models.flatMap((model) =>
+      validateModelEntry(model).map((problem) => `${model.id}: ${problem}`),
+    );
     const checks = [
       {
         id: "key",
@@ -312,6 +322,12 @@ export async function handleDashboard(
         label: "OpenRouter erisimi",
         ok: credit.ok,
         hint: credit.ok ? undefined : credit.message,
+      },
+      {
+        id: "model_config",
+        label: "Model ayarlari gecerli",
+        ok: modelProblems.length === 0,
+        hint: modelProblems.length > 0 ? modelProblems.join(" ") : undefined,
       },
     ];
     sendJson(res, 200, { checks });

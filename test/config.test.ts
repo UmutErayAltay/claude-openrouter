@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   isProviderSort,
+  isQuantization,
   isReasoningEffort,
+  QUANTIZATIONS,
   configPath,
   findModel,
   loadConfig,
@@ -125,5 +127,17 @@ describe("isProviderSort", () => {
       expect(isProviderSort(value)).toBe(true);
     }
     expect(isProviderSort("cheapest")).toBe(false);
+  });
+});
+
+describe("isQuantization", () => {
+  it("accepts every value in QUANTIZATIONS and rejects the rest", () => {
+    for (const value of QUANTIZATIONS) {
+      expect(isQuantization(value)).toBe(true);
+    }
+    expect(isQuantization("fp99")).toBe(false);
+    // A single space-separated string, the shape the historical bug produced.
+    expect(isQuantization("fp8 bf16 fp16")).toBe(false);
+    expect(isQuantization("")).toBe(false);
   });
 });

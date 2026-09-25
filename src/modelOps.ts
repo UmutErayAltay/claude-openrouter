@@ -1,7 +1,9 @@
 import {
   findModel,
   isProviderSort,
+  isQuantization,
   isReasoningEffort,
+  QUANTIZATIONS,
   type Config,
   type ModelEntry,
   type ProviderSort,
@@ -47,13 +49,107 @@ function validateSort(value: string | null | undefined): ProviderSort | undefine
   return value;
 }
 
+/**
+ * Splits on comma AND whitespace before validating, so `--quantizations
+ * "fp8 bf16 fp16"` (a single comma-less argument) is parsed the same way as
+ * `--quantizations fp8,bf16,fp16` instead of becoming one invalid element
+ * OpenRouter rejects with `provider.quantizations.0: Invalid option`.
+ */
+function normalizeQuantizations(values: string[]): string[] {
+  const normalized = values
+    .flatMap((value) => value.split(/[\s,]+/))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const unique = [...new Set(normalized)];
+  const invalid = unique.filter((value) => !isQuantization(value));
+  if (invalid.length > 0) {
+    throw new ModelOpError(
+      `Gecersiz quantization degeri: ${invalid.join(", ")}. Gecerli degerler: ${QUANTIZATIONS.join(", ")}.`,
+    );
+  }
+  return unique;
+}
+
+function validatePositiveInteger<T extends number | null | undefined>(
+  value: T,
+  fieldName: string,
+): T {
+  if (value === undefined || value === null) return value;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ModelOpError(`Gecersiz ${fieldName}: ${value}. Pozitif bir tam sayi olmali.`);
+  }
+  return value;
+}
+
+function validateMaxPrice<T extends { prompt?: number; completion?: number } | null | undefined>(
+  value: T,
+): T {
+  if (value === undefined || value === null) return value;
+  for (const [key, price] of Object.entries(value)) {
+    if (price === undefined) continue;
+    if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {
+      throw new ModelOpError(
+        `Gecersiz maxPrice.${key}: ${price}. Negatif olmayan sonlu bir sayi olmali.`,
+      );
+    }
+  }
+  return value;
+}
+
+/**
+ * Checks an entry already on disk (e.g. from `cor doctor`, hand-edited
+ * config, or an older version of cor) against today's validation rules.
+ * Never throws — collects every problem so all of them can be reported at
+ * once, with the exact bad value so the fix is obvious.
+ */
+export function validateModelEntry(entry: ModelEntry): string[] {
+  const problems: string[] = [];
+
+  if (entry.quantizations) {
+    const invalid = entry.quantizations.filter((value) => !isQuantization(value));
+    if (invalid.length > 0) {
+      problems.push(
+        `quantizations gecersiz: ${JSON.stringify(invalid)} (virgulle mi ayrilmis, yoksa tek boslukla ayrilmis bir eleman mi?). Gecerli degerler: ${QUANTIZATIONS.join(", ")}.`,
+      );
+    }
+  }
+  if (entry.reasoning !== undefined && !isReasoningEffort(entry.reasoning)) {
+    problems.push(`reasoning gecersiz: "${entry.reasoning}".`);
+  }
+  if (entry.providerSort !== undefined && !isProviderSort(entry.providerSort)) {
+    problems.push(`providerSort gecersiz: "${entry.providerSort}".`);
+  }
+  if (
+    entry.contextTokens !== undefined &&
+    (!Number.isInteger(entry.contextTokens) || entry.contextTokens <= 0)
+  ) {
+    problems.push(`contextTokens gecersiz: ${entry.contextTokens}.`);
+  }
+  if (
+    entry.maxOutputTokens !== undefined &&
+    (!Number.isInteger(entry.maxOutputTokens) || entry.maxOutputTokens <= 0)
+  ) {
+    problems.push(`maxOutputTokens gecersiz: ${entry.maxOutputTokens}.`);
+  }
+  if (entry.maxPrice) {
+    for (const [key, price] of Object.entries(entry.maxPrice)) {
+      if (price !== undefined && (typeof price !== "number" || !Number.isFinite(price) || price < 0)) {
+        problems.push(`maxPrice.${key} gecersiz: ${price}.`);
+      }
+    }
+  }
+  return problems;
+}
+
 /** Builds a brand new entry from an input — used by `add`, before autofill. */
 export function buildModelEntry(id: string, input: ModelInput = {}): ModelEntry {
   const entry: ModelEntry = { id };
   if (input.label) entry.label = input.label;
   if (input.description) entry.description = input.description;
-  if (typeof input.contextTokens === "number") entry.contextTokens = input.contextTokens;
-  if (typeof input.maxOutputTokens === "number") entry.maxOutputTokens = input.maxOutputTokens;
+  const contextTokens = validatePositiveInteger(input.contextTokens, "contextTokens");
+  if (typeof contextTokens === "number") entry.contextTokens = contextTokens;
+  const maxOutputTokens = validatePositiveInteger(input.maxOutputTokens, "maxOutputTokens");
+  if (typeof maxOutputTokens === "number") entry.maxOutputTokens = maxOutputTokens;
   if (input.behavesAs) entry.behavesAs = input.behavesAs;
   if (typeof input.stream === "boolean") entry.stream = input.stream;
 
@@ -63,8 +159,13 @@ export function buildModelEntry(id: string, input: ModelInput = {}): ModelEntry 
   const providerSort = validateSort(input.providerSort);
   if (providerSort) entry.providerSort = providerSort;
 
-  if (input.maxPrice) entry.maxPrice = input.maxPrice;
-  if (input.quantizations?.length) entry.quantizations = input.quantizations;
+  const maxPrice = validateMaxPrice(input.maxPrice);
+  if (maxPrice) entry.maxPrice = maxPrice;
+
+  if (input.quantizations?.length) {
+    const normalized = normalizeQuantizations(input.quantizations);
+    if (normalized.length > 0) entry.quantizations = normalized;
+  }
 
   return entry;
 }
@@ -84,15 +185,21 @@ export function mergeModelEntry(existing: ModelEntry, patch: ModelInput): ModelE
 
   apply("label", patch.label ?? undefined);
   apply("description", patch.description ?? undefined);
-  apply("contextTokens", patch.contextTokens ?? undefined);
-  apply("maxOutputTokens", patch.maxOutputTokens ?? undefined);
+  apply("contextTokens", validatePositiveInteger(patch.contextTokens, "contextTokens"));
+  apply("maxOutputTokens", validatePositiveInteger(patch.maxOutputTokens, "maxOutputTokens"));
   apply("behavesAs", patch.behavesAs ?? undefined);
   apply("stream", patch.stream ?? undefined);
   // A manual edit to `stream` is the user acknowledging the model, whichever
   // way they set it — the "auto-recovered" badge no longer applies.
   if (patch.stream !== undefined) delete merged.autoRecovered;
-  apply("maxPrice", patch.maxPrice ?? undefined);
-  apply("quantizations", patch.quantizations);
+  apply("maxPrice", validateMaxPrice(patch.maxPrice));
+
+  if (patch.quantizations === null) delete merged.quantizations;
+  else if (patch.quantizations !== undefined) {
+    const normalized = normalizeQuantizations(patch.quantizations);
+    if (normalized.length > 0) merged.quantizations = normalized;
+    else delete merged.quantizations;
+  }
 
   if (patch.reasoning === null) delete merged.reasoning;
   else {

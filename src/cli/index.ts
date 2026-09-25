@@ -19,7 +19,13 @@ import {
 import { fetchCatalog, fetchEndpoints, searchCatalog } from "../openrouterCatalog.js";
 import { isPortAnswering, isRunning, readPid, startProxy, stopProxy } from "../proxyProcess.js";
 import { writeAgent } from "../agentTemplate.js";
-import { ModelOpError, addModel, removeModel, type ModelInput } from "../modelOps.js";
+import {
+  ModelOpError,
+  addModel,
+  removeModel,
+  validateModelEntry,
+  type ModelInput,
+} from "../modelOps.js";
 import { HELP } from "./help.js";
 
 async function main(argv: string[]): Promise<number> {
@@ -374,6 +380,11 @@ async function commandDoctor(): Promise<number> {
 
   check(Boolean(resolveOpenRouterKey(config)), "OpenRouter anahtari", "cor key <anahtar>");
   check(config.models.length > 0, "Ekli model", "cor add <model-id>");
+
+  for (const model of config.models) {
+    const problems = validateModelEntry(model);
+    check(problems.length === 0, `${model.id}: config gecerli`, problems.join(" "));
+  }
 
   let settingsOk = false;
   let optionCount = 0;

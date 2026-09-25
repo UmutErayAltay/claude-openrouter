@@ -373,7 +373,13 @@ describe("GET /dashboard/api/health", () => {
     expect(status).toBe(200);
     const checks = body.checks as { id: string; ok: boolean }[];
     expect(checks.every((check) => check.ok)).toBe(true);
-    expect(checks.map((check) => check.id).sort()).toEqual(["credit", "key", "models", "synced"]);
+    expect(checks.map((check) => check.id).sort()).toEqual([
+      "credit",
+      "key",
+      "model_config",
+      "models",
+      "synced",
+    ]);
   });
 
   it("flags the relevant checks as failing", async () => {
@@ -389,6 +395,17 @@ describe("GET /dashboard/api/health", () => {
     expect(byId.synced?.ok).toBe(false);
     expect(byId.credit?.ok).toBe(false);
     expect(byId.key?.hint).toBeTruthy();
+  });
+
+  it("flags model_config as failing for an invalid stored model entry", async () => {
+    models = [{ id: "openai/gpt-5", quantizations: ["fp8 bf16 fp16"] }];
+    syncedFlag = true;
+
+    const { body } = await getJson("/dashboard/api/health");
+    const checks = body.checks as { id: string; ok: boolean; hint?: string }[];
+    const byId = Object.fromEntries(checks.map((check) => [check.id, check]));
+    expect(byId.model_config?.ok).toBe(false);
+    expect(byId.model_config?.hint).toMatch(/openai\/gpt-5/);
   });
 });
 
