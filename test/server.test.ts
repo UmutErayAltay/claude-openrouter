@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createProxyServer, estimateInputTokens } from "../src/server/index.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
+import { resetMetrics } from "../src/metrics.js";
 
 /** Records what the proxy sent upstream so the tests can assert on it. */
 interface Capture {
@@ -527,6 +528,48 @@ describe("proxy routing", () => {
 
     expect(body.data.map((model) => model.id)).toEqual(["claude-opus-5", "openai/gpt-5"]);
     expect(body.data[1]?.display_name).toBe("GPT-5");
+  });
+});
+
+describe("GET /metrics", () => {
+  it("reports a successful request under outcome ok, with its tokens and cost", async () => {
+    resetMetrics();
+    respond = jsonUpstream({
+      id: "gen-1",
+      choices: [{ message: { content: "merhaba" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 5, completion_tokens: 2, cost: 0.0003 },
+    });
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "selam" }],
+    });
+
+    const text = await (await fetch(`${proxyUrl}/metrics`)).text();
+    expect(text).toContain('cor_requests_total{model="openai/gpt-5",outcome="ok"} 1');
+    expect(text).toContain('cor_tokens_total{model="openai/gpt-5",type="prompt"} 5');
+    expect(text).toContain('cor_cost_usd_total{model="openai/gpt-5"} 0.0003');
+  });
+
+  it("reports upstream_error and no_key as distinct outcomes", async () => {
+    resetMetrics();
+    respond = jsonUpstream({ error: { message: "bozuk" } }, 500);
+
+    await post("/v1/messages", {
+      model: "openai/gpt-5",
+      max_tokens: 10,
+      messages: [{ role: "user", content: "x" }],
+    });
+
+    const text = await (await fetch(`${proxyUrl}/metrics`)).text();
+    expect(text).toContain('cor_requests_total{model="openai/gpt-5",outcome="upstream_error"} 1');
+  });
+
+  it("serves plain text with a Prometheus-compatible content type", async () => {
+    const response = await fetch(`${proxyUrl}/metrics`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
   });
 });
 

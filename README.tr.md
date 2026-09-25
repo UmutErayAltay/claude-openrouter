@@ -280,6 +280,19 @@ Mutasyon uçları (model ekle/sil, ajan yaz) sadece `127.0.0.1`/`localhost`'tan 
 
 ---
 
+## Metrikler
+
+`GET http://127.0.0.1:<port>/metrics` — Prometheus text exposition formatı, ekstra bayrak gerekmez, `/healthz`'in yanında her zaman açık:
+
+- `cor_requests_total{model,outcome}` — outcome şunlardan biri: `ok`, `upstream_error`, `network_error`, `no_key`, `stream_error`.
+- `cor_request_duration_seconds` — `model` etiketli bir histogram.
+- `cor_tokens_total{model,type}` — type: `prompt`, `completion`, `reasoning` veya `cached`.
+- `cor_cost_usd_total{model}`.
+
+Sadece bellekte tutulur, proxy yeniden başlayınca sıfırlanır — kalıcı kayıt `~/.claude-openrouter/usage.jsonl` (dashboard'un okuduğu). Yerel bir Prometheus çalıştırıyorsan bu porta bakan bir scrape job'u ekle.
+
+---
+
 ## Dosyalar
 
 | Dosya | İçerik |

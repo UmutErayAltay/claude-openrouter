@@ -19,6 +19,7 @@ import type {
   OpenAIUsage,
 } from "../translate/types.js";
 import { recordUsage as recordUsageToLog, type UsageRecord } from "../usageLog.js";
+import type { RequestOutcome } from "../metrics.js";
 import { sendJson } from "./http.js";
 
 /** Claude Code aborts a stream that sends no bytes for 300s; stay well under. */
@@ -55,7 +56,7 @@ export async function handleOpenRouter(
   request: AnthropicRequest,
   res: ServerResponse,
   options: OpenRouterHandlerOptions = {},
-): Promise<void> {
+): Promise<RequestOutcome> {
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
     sendJson(
@@ -66,7 +67,7 @@ export async function handleOpenRouter(
         "OpenRouter anahtari yok. `cor key <anahtar>` calistir veya OPENROUTER_API_KEY ayarla.",
       ),
     );
-    return;
+    return "no_key";
   }
 
   const payload = anthropicToOpenAI(request, entry);
@@ -90,19 +91,19 @@ export async function handleOpenRouter(
       502,
       anthropicError(502, `OpenRouter'a ulasilamadi: ${(err as Error).message}`),
     );
-    return;
+    return "network_error";
   }
 
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
     sendJson(res, upstream.status, openRouterErrorToAnthropic(upstream.status, text));
-    return;
+    return "upstream_error";
   }
 
   const record = options.recordUsage ?? recordUsageToLog;
 
   if (payload.stream) {
-    await streamResponse(upstream, request.model, res, {
+    return streamResponse(upstream, request.model, res, {
       // Only a turn that offered tools can reveal the failure.
       tools: request.tools ?? [],
       modelId: entry.id,
@@ -110,13 +111,12 @@ export async function handleOpenRouter(
       markNonStreaming: options.markNonStreaming ?? markModelNonStreaming,
       recordUsage: record,
     });
-    return;
   }
 
   const raw = (await upstream.json().catch(() => ({}))) as OpenAIResponse;
   if (raw.error) {
     sendJson(res, 502, anthropicError(502, `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`));
-    return;
+    return "upstream_error";
   }
 
   // Recorded here rather than after recovery: cost and token counts describe
@@ -142,10 +142,11 @@ export async function handleOpenRouter(
     });
     for (const event of synthesizeStream(json, request.model)) res.write(event);
     res.end();
-    return;
+    return "ok";
   }
 
   sendJson(res, 200, openAIToAnthropic(json, request.model));
+  return "ok";
 }
 
 interface StreamContext {
@@ -161,7 +162,7 @@ async function streamResponse(
   requestedModel: string,
   res: ServerResponse,
   context: StreamContext,
-): Promise<void> {
+): Promise<RequestOutcome> {
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -183,7 +184,7 @@ async function streamResponse(
   try {
     if (!upstream.body) {
       for (const event of translator.finish()) res.write(event);
-      return;
+      return "stream_error";
     }
 
     const decoder = new TextDecoder();
@@ -208,7 +209,7 @@ async function streamResponse(
           res.write(
             sseEvent("error", anthropicError(500, `OpenRouter: ${chunk.error.message ?? "hata"}`)),
           );
-          return;
+          return "stream_error";
         }
 
         const delta = chunk.choices?.[0]?.delta;
@@ -272,10 +273,12 @@ async function streamResponse(
     // Recorded on the success path only: an error or an aborted stream
     // reaches its own return/catch above and never gets here.
     context.recordUsage(toUsageEntry(context.modelId, translator.lastUsage, true));
+    return "ok";
   } catch (err) {
     if (!res.writableEnded) {
       res.write(sseEvent("error", anthropicError(500, `Akis kesildi: ${(err as Error).message}`)));
     }
+    return "stream_error";
   } finally {
     clearInterval(ping);
     if (!res.writableEnded) res.end();

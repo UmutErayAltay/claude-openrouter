@@ -44,6 +44,7 @@ Proxy
   doctor                   Kurulumu bastan sona kontrol et
   dashboard                Proxy'yi baslat, kullanim/kredi ve model yonetim
                            arayuzunu tarayicida ac (http://127.0.0.1:<port>/dashboard)
+                           Prometheus formatinda metrikler: http://127.0.0.1:<port>/metrics
 
 Ortam degiskenleri
   OPENROUTER_API_KEY       Anahtari diske yazmadan vermek icin

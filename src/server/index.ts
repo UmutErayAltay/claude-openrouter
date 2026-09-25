@@ -8,7 +8,8 @@ import { routeFor } from "../router.js";
 import { passthroughToAnthropic } from "./anthropicPassthrough.js";
 import { handleOpenRouter } from "./openrouterHandler.js";
 import { forwardableHeaders, readBody, sendJson } from "./http.js";
-import type { UsageRecord } from "../usageLog.js";
+import { recordUsage as recordUsageToLog, type UsageRecord } from "../usageLog.js";
+import { recordRequest, recordUsageMetrics, renderMetrics } from "../metrics.js";
 import { defaultDashboardDeps, handleDashboard, type DashboardDeps } from "./dashboardApi.js";
 import { buildDashboardHtml } from "./dashboardPage.js";
 
@@ -28,16 +29,23 @@ interface HandleContext {
   load: () => Config;
   log: (message: string) => void;
   markNonStreaming?: (modelId: string) => boolean;
-  recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+  recordUsage: (entry: Omit<UsageRecord, "ts">) => void;
   dashboardDeps: DashboardDeps;
 }
 
 export function createProxyServer(options: ProxyOptions = {}): Server {
+  const recordUsageToBase = options.recordUsage ?? recordUsageToLog;
+
   const context: HandleContext = {
     load: options.loadConfig ?? loadConfig,
     log: options.log ?? (() => {}),
     markNonStreaming: options.markNonStreaming,
-    recordUsage: options.recordUsage,
+    // Every real request feeds both the durable usage.jsonl log and the
+    // in-memory /metrics counters from the same entry, so they never drift.
+    recordUsage: (entry) => {
+      recordUsageToBase(entry);
+      recordUsageMetrics(entry);
+    },
     dashboardDeps: { ...defaultDashboardDeps(), ...options.dashboard },
   };
 
@@ -65,6 +73,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
 
   if (req.method === "GET" && path === "/healthz") {
     sendJson(res, 200, { status: "ok", service: "claude-openrouter" });
+    return;
+  }
+
+  if (req.method === "GET" && path === "/metrics") {
+    res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });
+    res.end(renderMetrics());
     return;
   }
 
@@ -111,7 +125,17 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
   }
 
   log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
-  await handleOpenRouter(config, route.entry, request, res, { log, markNonStreaming, recordUsage });
+  const startedAt = Date.now();
+  const outcome = await handleOpenRouter(config, route.entry, request, res, {
+    log,
+    markNonStreaming,
+    recordUsage,
+  });
+  recordRequest({
+    model: route.entry.id,
+    outcome,
+    durationSeconds: (Date.now() - startedAt) / 1000,
+  });
 }
 
 /**

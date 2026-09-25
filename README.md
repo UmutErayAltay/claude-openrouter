@@ -280,6 +280,19 @@ The mutating endpoints (add/remove a model, write an agent) only accept requests
 
 ---
 
+## Metrics
+
+`GET http://127.0.0.1:<port>/metrics` — Prometheus text exposition format, no extra flag needed, always on next to `/healthz`:
+
+- `cor_requests_total{model,outcome}` — outcome is one of `ok`, `upstream_error`, `network_error`, `no_key`, `stream_error`.
+- `cor_request_duration_seconds` — a histogram, labeled by `model`.
+- `cor_tokens_total{model,type}` — type is `prompt`, `completion`, `reasoning`, or `cached`.
+- `cor_cost_usd_total{model}`.
+
+In-memory only, resets on restart — `~/.claude-openrouter/usage.jsonl` (which the dashboard reads) is the durable record. If you run a local Prometheus, add a scrape job pointing at this port.
+
+---
+
 ## Files
 
 | File | Contents |
