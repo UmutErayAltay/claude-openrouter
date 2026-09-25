@@ -24,6 +24,18 @@ let dir: string;
 const originalDir = process.env.CLAUDE_OPENROUTER_DIR;
 const originalKey = process.env.OPENROUTER_API_KEY;
 
+/**
+ * NTFS has no POSIX permission bits, so on Windows `fs.stat().mode` reports
+ * something like 0o666 regardless of what mode `writeFileSync`/`chmodSync`
+ * were given (a real difference, caught by CI's Windows job — not something
+ * this project's code can fix, since Node's fs module doesn't map onto NTFS
+ * ACLs). Assert the real guarantee only where the platform can provide it.
+ */
+function expectOwnerOnlyMode(path: string): void {
+  if (process.platform === "win32") return;
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "cor-config-"));
   process.env.CLAUDE_OPENROUTER_DIR = dir;
@@ -53,7 +65,7 @@ describe("loadConfig", () => {
 
   it("stores the API key so only the owner can read it", () => {
     saveConfig({ ...DEFAULT_CONFIG, openrouterApiKey: "sk-or-secret" });
-    expect(statSync(configPath()).mode & 0o777).toBe(0o600);
+    expectOwnerOnlyMode(configPath());
   });
 
   it("never writes the key into config.json, even when the caller passes one", () => {
@@ -109,7 +121,7 @@ describe("saveKey / keyPath", () => {
   it("writes the key to its own file with 0600 permissions, separate from config.json", () => {
     saveKey("sk-or-secret");
     expect(readFileSync(keyPath(), "utf8").trim()).toBe("sk-or-secret");
-    expect(statSync(keyPath()).mode & 0o777).toBe(0o600);
+    expectOwnerOnlyMode(keyPath());
   });
 
   it("overwrites a previously saved key", () => {
