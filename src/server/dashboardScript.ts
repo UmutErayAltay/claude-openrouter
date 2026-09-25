@@ -89,7 +89,12 @@ export const DASHBOARD_JS = `
   }
 
   function renderStatus(status) {
-    var keySourceLabels = { env: "ortam degiskeni", config: "config dosyasi", none: "yok" };
+    var keySourceLabels = {
+      env: "ortam degiskeni",
+      file: "anahtar dosyasi",
+      config: "config dosyasi (eski)",
+      none: "yok",
+    };
     var keySourceLabel = keySourceLabels[status.keySource] || status.keySource;
     qs("statusMeta").textContent =
       "port " + status.port +

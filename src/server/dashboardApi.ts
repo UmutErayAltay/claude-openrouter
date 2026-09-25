@@ -11,6 +11,7 @@ import { writeAgent as writeAgentImpl } from "../agentTemplate.js";
 import {
   configPath,
   findModel,
+  keySource,
   logPath,
   resolveOpenRouterKey,
   saveConfig as saveConfigImpl,
@@ -278,7 +279,7 @@ export async function handleDashboard(
       port: config.port,
       cwd: process.cwd(),
       configPath: configPath(),
-      keySource: process.env.OPENROUTER_API_KEY ? "env" : config.openrouterApiKey ? "config" : "none",
+      keySource: keySource(config),
       modelCount: config.models.length,
       agentCount: deps.listAgents(config).length,
       synced: deps.isModelPickerSynced(config.models),
@@ -293,7 +294,7 @@ export async function handleDashboard(
 
   if (req.method === "GET" && path === "/dashboard/api/health") {
     const credit = await fetchCreditInfo(config);
-    const keySource = process.env.OPENROUTER_API_KEY ? "env" : config.openrouterApiKey ? "config" : "none";
+    const source = keySource(config);
     const synced = deps.isModelPickerSynced(config.models);
     const modelProblems = config.models.flatMap((model) =>
       validateModelEntry(model).map((problem) => `${model.id}: ${problem}`),
@@ -302,8 +303,8 @@ export async function handleDashboard(
       {
         id: "key",
         label: "OpenRouter anahtari",
-        ok: keySource !== "none",
-        hint: keySource === "none" ? "cor key <anahtar>" : undefined,
+        ok: source !== "none",
+        hint: source === "none" ? "cor key <anahtar>" : undefined,
       },
       {
         id: "models",

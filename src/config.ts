@@ -130,6 +130,32 @@ export function logPath(): string {
   return join(configDir(), "proxy.log");
 }
 
+/**
+ * The API key lives here, separate from config.json, so opening the config
+ * file to look at model settings never shows the key (it leaked into a
+ * debug transcript this way once — see the vault's 2026-09-21 incident).
+ */
+export function keyPath(): string {
+  return join(configDir(), "key");
+}
+
+function readKeyFile(): string | undefined {
+  if (!existsSync(keyPath())) return undefined;
+  const value = readFileSync(keyPath(), "utf8").trim();
+  return value.length > 0 ? value : undefined;
+}
+
+/** Writes the key file atomically with 0600 permissions, same pattern as saveConfig. */
+export function saveKey(key: string): void {
+  const dir = configDir();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = keyPath();
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, `${key}\n`, { mode: 0o600 });
+  renameSync(tmp, path);
+  chmodSync(path, 0o600);
+}
+
 export function loadConfig(): Config {
   const path = configPath();
   if (!existsSync(path)) return { ...DEFAULT_CONFIG, models: [] };
@@ -170,20 +196,62 @@ function isModelEntry(value: unknown): value is ModelEntry {
   );
 }
 
-/** Writes the config atomically with 0600 permissions — it holds an API key. */
+/**
+ * Writes the config atomically with 0600 permissions. Never writes a key
+ * into config.json: if the in-memory object still carries a legacy
+ * `openrouterApiKey` (loaded from an older config.json) and no key file
+ * exists yet, it's moved to the key file first — written then read back to
+ * confirm — before the keyless config is written, so a failed migration
+ * never loses the only copy of the key.
+ */
 export function saveConfig(config: Config): void {
   const dir = configDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  if (config.openrouterApiKey && !existsSync(keyPath())) {
+    saveKey(config.openrouterApiKey);
+    if (readKeyFile() !== config.openrouterApiKey) {
+      throw new Error("Anahtar key dosyasina yazilamadi; config.json degistirilmedi.");
+    }
+  }
+
+  const { openrouterApiKey: _legacyKey, ...withoutKey } = config;
   const path = configPath();
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(tmp, `${JSON.stringify(withoutKey, null, 2)}\n`, { mode: 0o600 });
   renameSync(tmp, path);
   chmodSync(path, 0o600);
 }
 
-/** The env var wins over the stored key, so a key never has to touch disk. */
+/**
+ * If config.json still carries a legacy key, moves it into the key file
+ * and rewrites config.json without it. Idempotent: a config already free of
+ * the legacy field is a no-op. Returns whether a migration happened.
+ */
+export function migrateLegacyKey(): boolean {
+  const config = loadConfig();
+  if (!config.openrouterApiKey) return false;
+  saveConfig(config);
+  return true;
+}
+
+export type KeySource = "env" | "file" | "config" | "none";
+
+/** Which source `resolveOpenRouterKey` will read from, for status/health UIs. */
+export function keySource(config: Config): KeySource {
+  if (process.env.OPENROUTER_API_KEY) return "env";
+  if (readKeyFile() !== undefined) return "file";
+  if (config.openrouterApiKey) return "config";
+  return "none";
+}
+
+/**
+ * Resolution order: env var, then the key file, then the legacy
+ * config.json field (read-only, for backward compatibility with a config
+ * saved before this version existed — `saveConfig` migrates it out).
+ */
 export function resolveOpenRouterKey(config: Config): string | undefined {
-  return process.env.OPENROUTER_API_KEY ?? config.openrouterApiKey;
+  return process.env.OPENROUTER_API_KEY ?? readKeyFile() ?? config.openrouterApiKey;
 }
 
 export function findModel(config: Config, modelId: string): ModelEntry | undefined {

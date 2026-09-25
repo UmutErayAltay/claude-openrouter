@@ -1,8 +1,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { configDir, loadConfig, logPath } from "../config.js";
+import { configDir, loadConfig, logPath, migrateLegacyKey } from "../config.js";
 import { createProxyServer } from "./index.js";
 
 /** Entry point for the detached proxy process started by `cor start`. */
+migrateLegacyKey();
 const port = Number(process.env.CLAUDE_OPENROUTER_PORT ?? loadConfig().port);
 
 mkdirSync(configDir(), { recursive: true, mode: 0o700 });

@@ -1,8 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { createProxyServer } from "../src/server/index.js";
-import { DEFAULT_CONFIG, type Config, type ModelEntry } from "../src/config.js";
+import { DEFAULT_CONFIG, saveKey, type Config, type ModelEntry } from "../src/config.js";
 import type { AgentOptions } from "../src/agentTemplate.js";
 import type { AgentSummary } from "../src/agentDiscovery.js";
 import type { TestModelResult } from "../src/modelTest.js";
@@ -137,7 +140,16 @@ afterAll(async () => {
   await new Promise<void>((resolve) => upstream.close(() => resolve()));
 });
 
+let keyDir: string;
+const originalKeyDir = process.env.CLAUDE_OPENROUTER_DIR;
+
 beforeEach(() => {
+  // keySource()/resolveOpenRouterKey() read the real key file from disk;
+  // isolate that lookup so a leftover key on the machine running the tests
+  // can't change what "config"/"file" resolve to below.
+  keyDir = mkdtempSync(join(tmpdir(), "cor-dashboard-key-"));
+  process.env.CLAUDE_OPENROUTER_DIR = keyDir;
+
   models = [];
   hasKey = true;
   keyResponse = () => ({
@@ -174,6 +186,12 @@ beforeEach(() => {
   requestedLogLines = [];
 });
 
+afterEach(() => {
+  rmSync(keyDir, { recursive: true, force: true });
+  if (originalKeyDir === undefined) delete process.env.CLAUDE_OPENROUTER_DIR;
+  else process.env.CLAUDE_OPENROUTER_DIR = originalKeyDir;
+});
+
 async function getJson(path: string, headers: Record<string, string> = {}) {
   const response = await fetch(`${proxyUrl}${path}`, { headers });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
@@ -208,6 +226,14 @@ describe("GET /dashboard/api/status", () => {
     expect(body).toMatchObject({ modelCount: 1, agentCount: 1, keySource: "config" });
     expect(typeof body.cwd).toBe("string");
     expect(typeof body.configPath).toBe("string");
+  });
+
+  it("reports keySource 'file' when the key lives in the separate key file", async () => {
+    hasKey = false;
+    saveKey("sk-or-from-file");
+
+    const { body } = await getJson("/dashboard/api/status");
+    expect(body.keySource).toBe("file");
   });
 });
 

@@ -284,13 +284,14 @@ Mutasyon uçları (model ekle/sil, ajan yaz) sadece `127.0.0.1`/`localhost`'tan 
 
 | Dosya | İçerik |
 |---|---|
-| `~/.claude-openrouter/config.json` | Anahtar, port, model listesi (izin `0600`) |
+| `~/.claude-openrouter/config.json` | Port, model listesi (izin `0600`) — anahtar burada değil |
+| `~/.claude-openrouter/key` | OpenRouter API anahtarı, tek başına (izin `0600`) |
 | `~/.claude-openrouter/proxy.log` | Proxy günlüğü |
 | `~/.claude-openrouter/usage.jsonl` | Dashboard'un okuduğu kullanım kaydı (2MB'ı geçince otomatik kırpılır) |
 | `~/.claude/settings.json` | `cor sync` yalnızca `modelPicker` anahtarını yazar |
 | `~/.claude/settings.json.cor-bak` | Son `sync` öncesi yedek |
 
-`cor sync` dosyanın geri kalanına dokunmaz; JSON bozuksa hiç yazmaz. `CLAUDE_OPENROUTER_DIR` ve `CLAUDE_CONFIG_DIR` ile dizinleri değiştirebilirsin. `OPENROUTER_API_KEY` ortam değişkeni kayıtlı anahtarın önüne geçer — anahtarı diske hiç yazmak istemiyorsan.
+`cor sync` dosyanın geri kalanına dokunmaz; JSON bozuksa hiç yazmaz. `CLAUDE_OPENROUTER_DIR` ve `CLAUDE_CONFIG_DIR` ile dizinleri değiştirebilirsin. Anahtar çözümleme sırası: `OPENROUTER_API_KEY` ortam değişkeni (anahtarı diske hiç yazmak istemiyorsan), sonra `~/.claude-openrouter/key`, sonra — salt okunur, bu dosya var olmadan önce kaydedilmiş bir config için — `config.json` içindeki eski `openrouterApiKey` alanı; `cor key` ve her config kaydı bu alanı otomatik olarak taşır.
 
 ---
 

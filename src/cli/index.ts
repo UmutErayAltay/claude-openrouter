@@ -4,10 +4,13 @@ import { existsSync } from "node:fs";
 import {
   configPath,
   findModel,
+  keyPath,
   loadConfig,
   logPath,
+  migrateLegacyKey,
   resolveOpenRouterKey,
   saveConfig,
+  saveKey,
 } from "../config.js";
 import {
   backupPath,
@@ -29,6 +32,7 @@ import {
 import { HELP } from "./help.js";
 
 async function main(argv: string[]): Promise<number> {
+  migrateLegacyKey();
   const [command, ...rest] = argv;
 
   switch (command) {
@@ -78,10 +82,8 @@ function commandKey(args: string[]): number {
     process.stderr.write("Kullanim: cor key <openrouter-anahtari>\n");
     return 1;
   }
-  const config = loadConfig();
-  config.openrouterApiKey = key;
-  saveConfig(config);
-  process.stdout.write(`Anahtar kaydedildi: ${configPath()} (izin 0600)\n`);
+  saveKey(key);
+  process.stdout.write(`Anahtar kaydedildi: ${keyPath()} (izin 0600)\n`);
   return 0;
 }
 
@@ -379,6 +381,12 @@ async function commandDoctor(): Promise<number> {
   };
 
   check(Boolean(resolveOpenRouterKey(config)), "OpenRouter anahtari", "cor key <anahtar>");
+  check(
+    !config.openrouterApiKey,
+    "config.json'da eski anahtar alani yok",
+    `Anahtar hala config.json icinde; otomatik tasima basarisiz olmus olabilir. ` +
+      `cor key <anahtar> ile yeniden kaydet, sonra config.json'daki openrouterApiKey alanini elle sil.`,
+  );
   check(config.models.length > 0, "Ekli model", "cor add <model-id>");
 
   for (const model of config.models) {

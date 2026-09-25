@@ -284,13 +284,14 @@ The mutating endpoints (add/remove a model, write an agent) only accept requests
 
 | File | Contents |
 |---|---|
-| `~/.claude-openrouter/config.json` | Key, port, model list (permission `0600`) |
+| `~/.claude-openrouter/config.json` | Port, model list (permission `0600`) — never the key |
+| `~/.claude-openrouter/key` | OpenRouter API key, alone (permission `0600`) |
 | `~/.claude-openrouter/proxy.log` | Proxy log |
 | `~/.claude-openrouter/usage.jsonl` | Usage log the dashboard reads (auto-trimmed past 2MB) |
 | `~/.claude/settings.json` | `cor sync` only writes the `modelPicker` key |
 | `~/.claude/settings.json.cor-bak` | Backup from before the last `sync` |
 
-`cor sync` never touches the rest of the file, and writes nothing if the JSON is malformed. Override the directories with `CLAUDE_OPENROUTER_DIR` and `CLAUDE_CONFIG_DIR`. The `OPENROUTER_API_KEY` environment variable takes precedence over the saved key, for when you don't want the key written to disk at all.
+`cor sync` never touches the rest of the file, and writes nothing if the JSON is malformed. Override the directories with `CLAUDE_OPENROUTER_DIR` and `CLAUDE_CONFIG_DIR`. Key resolution order: the `OPENROUTER_API_KEY` environment variable (for when you don't want the key written to disk at all), then `~/.claude-openrouter/key`, then — read-only, for a config saved before this file existed — the `openrouterApiKey` field in `config.json`, which `cor key` and any config save automatically migrate out.
 
 ---
 

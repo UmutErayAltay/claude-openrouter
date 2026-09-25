@@ -3,7 +3,8 @@ export const HELP = `claude-openrouter (cor) - Claude Code'a OpenRouter modeller
 Kullanim: cor <komut> [secenekler]
 
 Kurulum
-  key <anahtar>            OpenRouter API anahtarini kaydet (dosya izni 0600)
+  key <anahtar>            OpenRouter API anahtarini ayri bir dosyaya kaydet
+                           (~/.claude-openrouter/key, izin 0600 — config.json'da tutulmaz)
   add <model-id>           Modeli listeye ekle. Ornek: cor add openai/gpt-5
       --label <ad>           /model menusunde gorunecek ad
       --description <metin>  menude ikinci satir
