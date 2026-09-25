@@ -4,6 +4,22 @@
   "description": "Claude Code'a dokunmadan, OpenRouter uzerindeki istedigin modelleri /model menusune ekleyen yerel proxy",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UmutErayAltay/claude-openrouter.git"
+  },
+  "homepage": "https://github.com/UmutErayAltay/claude-openrouter#readme",
+  "bugs": {
+    "url": "https://github.com/UmutErayAltay/claude-openrouter/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "openrouter",
+    "anthropic",
+    "llm",
+    "proxy",
+    "cli"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -14,6 +30,7 @@
   "files": [
     "dist",
     "README.md",
+    "README.tr.md",
     "LICENSE"
   ],
   "scripts": {
@@ -21,7 +38,8 @@
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -47,6 +47,12 @@ npm link          # puts 'cor' on your PATH
 
 If `npm link` fails on permissions, use `sudo npm link`, or run it unlinked via `node dist/cli/index.js <command>`.
 
+Or install the published package directly:
+
+```bash
+npm install -g claude-openrouter
+```
+
 ## Quick start
 
 ```bash

@@ -77,7 +77,7 @@ export async function handleOpenRouter(
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`,
-        "http-referer": "https://github.com/UmutErayAltay/Claude-code-ve-di-er-modeller",
+        "http-referer": "https://github.com/UmutErayAltay/claude-openrouter",
         "x-title": "claude-openrouter",
       },
       body: JSON.stringify(payload),

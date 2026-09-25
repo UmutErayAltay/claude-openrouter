@@ -47,6 +47,12 @@ npm link          # 'cor' komutunu PATH'e ekler
 
 `npm link` izin hatası verirse `sudo npm link` kullan, ya da link olmadan `node dist/cli/index.js <komut>` şeklinde çalıştır.
 
+Ya da yayınlanmış paketi doğrudan kur:
+
+```bash
+npm install -g claude-openrouter
+```
+
 ## Hızlı başlangıç
 
 ```bash
