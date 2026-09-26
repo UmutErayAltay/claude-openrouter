@@ -6,6 +6,10 @@ export interface CatalogModel {
   description?: string;
   contextLength?: number;
   maxCompletionTokens?: number;
+  /** Dollars per million prompt tokens; undefined when OpenRouter lists no price. */
+  promptPrice?: number;
+  /** Dollars per million completion tokens; undefined when OpenRouter lists no price. */
+  completionPrice?: number;
 }
 
 interface RawCatalogModel {
@@ -14,6 +18,16 @@ interface RawCatalogModel {
   description?: string;
   context_length?: number;
   top_provider?: { context_length?: number; max_completion_tokens?: number };
+  /** Per-token dollar strings, e.g. "0.0000015"; "0" on the free tier. */
+  pricing?: { prompt?: unknown; completion?: unknown };
+}
+
+/** Per-token price string -> dollars per million, or undefined when absent/unparseable. */
+function perMillion(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  // Round away the float noise of "0.0000002" * 1e6 (0.19999...).
+  return Number.isFinite(parsed) ? Math.round(parsed * 1e12) / 1e6 : undefined;
 }
 
 export async function fetchCatalog(config: Config): Promise<CatalogModel[]> {
@@ -33,6 +47,8 @@ export async function fetchCatalog(config: Config): Promise<CatalogModel[]> {
       description: model.description,
       contextLength: model.top_provider?.context_length ?? model.context_length,
       maxCompletionTokens: model.top_provider?.max_completion_tokens,
+      promptPrice: perMillion(model.pricing?.prompt),
+      completionPrice: perMillion(model.pricing?.completion),
     }));
 }
 

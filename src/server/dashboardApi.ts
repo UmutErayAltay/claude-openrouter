@@ -179,33 +179,26 @@ async function getCachedCatalog(config: Config) {
 }
 
 /**
- * The per-million prices OpenRouter reports for a catalog entry, in the same
- * unit fetchEndpoints uses, so the picker and the provider table can show one
- * number for both. Read structurally because a catalog entry without pricing
- * simply has none to report.
+ * The catalog entry with its prices in the unit fetchEndpoints uses, so the
+ * picker and the provider table show one number for both. An entry OpenRouter
+ * lists without a price is reported as null, never as $0.
  */
-function decorateCatalogModel(model: CatalogModel): CatalogModel & {
-  promptPrice: number;
-  completionPrice: number;
-  contextLength: number | undefined;
+function decorateCatalogModel(model: CatalogModel): Omit<
+  CatalogModel,
+  "promptPrice" | "completionPrice"
+> & {
+  promptPrice: number | null;
+  completionPrice: number | null;
 } {
-  const pricing = (model as { pricing?: { prompt?: unknown; completion?: unknown } }).pricing ?? {};
-  const toPrice = (value: unknown): number => {
-    const parsed = Number(value ?? 0);
-    return Number.isFinite(parsed) ? parsed * 1e6 : 0;
-  };
   return {
     ...model,
-    promptPrice: toPrice(pricing.prompt),
-    completionPrice: toPrice(pricing.completion),
-    contextLength: model.contextLength,
+    promptPrice: model.promptPrice ?? null,
+    completionPrice: model.completionPrice ?? null,
   };
 }
 
-/** Free means free on both sides: a free prompt billed on output isn't free. */
-function isFreeCatalogModel(
-  model: ReturnType<typeof decorateCatalogModel>,
-): boolean {
+/** Free means free on both sides; an unpriced entry is unknown, not free. */
+function isFreeCatalogModel(model: ReturnType<typeof decorateCatalogModel>): boolean {
   return model.promptPrice === 0 && model.completionPrice === 0;
 }
 

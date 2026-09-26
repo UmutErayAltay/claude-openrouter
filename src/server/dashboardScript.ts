@@ -1944,14 +1944,18 @@ export const DASHBOARD_JS = `
       // Fiyat her sonucta gorunur; ucretsiz olan yesil isaretlenir.
       var priceIn = item.promptPrice;
       var priceOut = item.completionPrice;
-      if (priceIn !== undefined || priceOut !== undefined) {
-        var isFree = !priceIn && !priceOut;
+      // null = OpenRouter fiyat vermemis; bilinmeyen, ucretsiz DEGIL.
+      if (priceIn !== undefined && priceOut !== undefined) {
+        var isFree = priceIn === 0 && priceOut === 0;
+        var unknown = priceIn === null || priceOut === null;
         var priceLine = document.createElement("div");
         priceLine.className = "cr-price" + (isFree ? " free" : "");
         priceLine.textContent = isFree
           ? "$0 / $0 ucretsiz"
-          : "$" + fmtCatalogPrice(priceIn) + " / $" + fmtCatalogPrice(priceOut) + " /M";
-        if (!isFree) {
+          : unknown
+            ? "fiyat bilinmiyor"
+            : "$" + fmtCatalogPrice(priceIn) + " / $" + fmtCatalogPrice(priceOut) + " /M";
+        if (!isFree && !unknown) {
           priceLine.title = "Girdi $/" + fmtCatalogPrice(priceIn) +
             "M, cikti $/" + fmtCatalogPrice(priceOut) + "M";
         }

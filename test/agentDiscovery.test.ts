@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { renderAgent } from "../src/agentTemplate.js";
@@ -8,6 +8,8 @@ import {
   deleteAgent,
   listAgents,
   parseAgentFrontmatter,
+  readAgent,
+  updateAgent,
 } from "../src/agentDiscovery.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 
@@ -201,5 +203,168 @@ describe("deleteAgent", () => {
     mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
     const file = join(projectDir, ".claude", "agents", "missing.md");
     expect(() => deleteAgent(file)).toThrow(AgentOpError);
+  });
+});
+
+describe("readAgent", () => {
+  it("returns the frontmatter, the body and the resolved path", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "kodcu.md");
+    writeFileSync(file, renderAgent({ name: "kodcu", modelId: "openai/gpt-5", scope: "project" }));
+
+    const agent = readAgent(file);
+
+    expect(agent.file).toBe(file);
+    expect(agent.frontmatter).toMatchObject({
+      name: "kodcu",
+      model: "openai/gpt-5",
+      tools: "Read, Edit, Write",
+      permissionMode: "acceptEdits",
+      maxTurns: "30",
+    });
+    // Everything before the closing fence is frontmatter; the rest is the prompt.
+    expect(agent.body.startsWith("Sen openai/gpt-5 uzerinde calisan bir uygulayicisin.")).toBe(true);
+    expect(agent.body).toContain("## Kurallar");
+    expect(agent.body).not.toContain("name: kodcu");
+    expect(agent.body).not.toContain("---");
+  });
+
+  it("reads a hand-written file with keys the dashboard doesn't manage", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "el.yml.md".replace(".yml", ""));
+    writeFileSync(
+      file,
+      "---\nname: elle\nmodel: qwen/qwen3-max\ntools: Read, Grep\npermissionMode: plan\nmaxTurns: 12\n---\n\nSadece oku, hicbir sey degistirme.\n",
+    );
+
+    const agent = readAgent(file);
+
+    expect(agent.frontmatter).toEqual({
+      name: "elle",
+      model: "qwen/qwen3-max",
+      tools: "Read, Grep",
+      permissionMode: "plan",
+      maxTurns: "12",
+    });
+    // The body keeps the text after the closing fence, trailing newline included.
+    expect(agent.body).toBe("Sadece oku, hicbir sey degistirme.\n");
+  });
+
+  it("returns an empty frontmatter and the whole text for a file with no fence", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "duz.md");
+    writeFileSync(file, "sadece duz metin\nikinci satir\n");
+
+    const agent = readAgent(file);
+    expect(agent.frontmatter).toEqual({});
+    expect(agent.body).toContain("sadece duz metin");
+  });
+
+  it("refuses a path outside the known agents directories", () => {
+    const outside = join(projectDir, "not-an-agents-dir.md");
+    writeFileSync(outside, "---\nname: x\n---\nbody\n");
+    expect(() => readAgent(outside)).toThrow(AgentOpError);
+  });
+
+  it("reports a missing file inside an agents directory", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    expect(() => readAgent(join(projectDir, ".claude", "agents", "yok.md"))).toThrow(AgentOpError);
+  });
+});
+
+describe("updateAgent", () => {
+  function writeProjectAgent(text: string): string {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const file = join(projectDir, ".claude", "agents", "kodcu.md");
+    writeFileSync(file, text);
+    return file;
+  }
+
+  it("changes the model and keeps every key it doesn't manage", () => {
+    const file = writeProjectAgent(
+      "---\nname: kodcu\nmodel: openai/gpt-5\ntools: Read, Edit, Write\npermissionMode: acceptEdits\nmaxTurns: 30\ncolor: cyan\n---\n\nEski govde.\n",
+    );
+
+    updateAgent(file, { model: "qwen/qwen3-max" });
+
+    const after = readAgent(file);
+    expect(after.frontmatter).toMatchObject({
+      name: "kodcu",
+      model: "qwen/qwen3-max",
+      permissionMode: "acceptEdits",
+      maxTurns: "30",
+      color: "cyan",
+    });
+    expect(after.body.trimEnd()).toBe("Eski govde.");
+  });
+
+  it("rewrites the tools list in Claude Code's own comma-separated form", () => {
+    const file = writeProjectAgent("---\nname: kodcu\nmodel: a\ntools: Read, Edit, Write\n---\n\nGövde.\n");
+
+    updateAgent(file, { tools: ["Read", "Grep", " Bash "] });
+
+    expect(readAgent(file).frontmatter.tools).toBe("Read, Grep, Bash");
+  });
+
+  it("changes the description and the body together", () => {
+    const file = writeProjectAgent("---\nname: kodcu\ndescription: Onceki\n---\n\nEski govde.\n");
+
+    updateAgent(file, { description: "Yeni aciklama", body: "Yeni govde." });
+
+    const after = readAgent(file);
+    expect(after.frontmatter.description).toBe("Yeni aciklama");
+    expect(after.body.trimEnd()).toBe("Yeni govde.");
+  });
+
+  it("leaves the body alone when the patch doesn't carry one", () => {
+    const file = writeProjectAgent("---\nname: kodcu\n---\n\nKorunacak govde.\n");
+
+    updateAgent(file, { model: "a" });
+
+    expect(readAgent(file).body.trimEnd()).toBe("Korunacak govde.");
+  });
+
+  it("adds a key the file never had", () => {
+    const file = writeProjectAgent("---\nname: kodcu\nmodel: a\n---\n\nGövde.\n");
+
+    updateAgent(file, { description: "Eklendi" });
+
+    expect(readAgent(file).frontmatter).toMatchObject({ name: "kodcu", model: "a", description: "Eklendi" });
+  });
+
+  it("is idempotent: re-applying the same patch changes nothing further", () => {
+    const file = writeProjectAgent("---\nname: kodcu\nmodel: a\ntools: Read\n---\n\nGövde.\n");
+
+    updateAgent(file, { model: "b" });
+    const once = readFileSync(file, "utf8");
+    updateAgent(file, { model: "b" });
+
+    expect(readFileSync(file, "utf8")).toBe(once);
+  });
+
+  it("refuses a path outside the known agents directories and writes nothing", () => {
+    const outside = join(projectDir, "not-an-agents-dir.md");
+    const original = "---\nname: x\n---\nbody\n";
+    writeFileSync(outside, original);
+
+    expect(() => updateAgent(outside, { model: "openai/gpt-5" })).toThrow(AgentOpError);
+    expect(readFileSync(outside, "utf8")).toBe(original);
+  });
+
+  it("refuses a path that climbs out of an agents directory", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    const secret = join(projectDir, "secret.md");
+    writeFileSync(secret, "---\nname: secret\n---\nbody\n");
+
+    const traversal = join(projectDir, ".claude", "agents", "..", "..", "secret.md");
+    expect(() => updateAgent(traversal, { model: "openai/gpt-5" })).toThrow(AgentOpError);
+    expect(readFileSync(secret, "utf8")).toContain("name: secret");
+  });
+
+  it("reports a missing file", () => {
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    expect(() => updateAgent(join(projectDir, ".claude", "agents", "yok.md"), { model: "a" })).toThrow(
+      AgentOpError,
+    );
   });
 });

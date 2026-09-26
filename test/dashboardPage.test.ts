@@ -51,6 +51,55 @@ const REFERENCED_IDS = [
   "exportBtn",
   "logAutoRefresh",
   "logBox",
+  "logToggleBtn",
+  "statGrid",
+  "healthSummary",
+  "dailyChartTitle",
+  "dailyTip",
+  "latencyChart",
+  "latencyLegend",
+  "latencyTip",
+  "resultsLegend",
+  "resultsList",
+  "resultsTip",
+  "onlyErrorsToggle",
+  "budgetBanner",
+  "historyBtn",
+  "historyPanel",
+  "historyBody",
+  "compareToggleBtn",
+  "comparePanel",
+  "comparePrompt",
+  "compareModels",
+  "compareCount",
+  "compareRunBtn",
+  "compareBody",
+  "presetFastBtn",
+  "presetFreeBtn",
+  "presetReasoningBtn",
+  "newModelBtn",
+  "newAgentBtn",
+  "agentFormPanel",
+  "agentFormCancel",
+  "agentEditPanel",
+  "agentEditForm",
+  "agentEditSave",
+  "agentEditCancel",
+  "aeFile",
+  "aeModel",
+  "aeTools",
+  "aeDescription",
+  "aeBody",
+  "settingsToggleBtn",
+  "settingsSummary",
+  "settingsForm",
+  "settingsSave",
+  "settingsCancel",
+  "sBudgetDaily",
+  "sBudgetMonthly",
+  "sBudgetAction",
+  "sErrorRate",
+  "sWebhook",
 ];
 
 describe("buildDashboardHtml", () => {
@@ -165,6 +214,67 @@ describe("yeniden tasarim", () => {
       expect(tbody).toBeGreaterThan(-1);
       const preceding = opens.filter((at) => at < tbody);
       expect(preceding.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// The ops-console panels added on top of the original page. The panels and the
+// endpoints that feed them are separate: a card can render perfectly while its
+// fetch path is typo'd, and vice versa.
+describe("ops console panels", () => {
+  const html = buildDashboardHtml();
+  const js = DASHBOARD_JS;
+
+  it("has a container for every panel it renders into", () => {
+    for (const id of [
+      "compareCard",
+      "settingsCard",
+      "latencyCard",
+      "budgetBanner",
+      "historyPanel",
+      "agentEditPanel",
+    ]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  it("calls every endpoint those panels depend on", () => {
+    for (const path of [
+      "/dashboard/api/metrics-recent",
+      "/dashboard/api/budget",
+      "/dashboard/api/settings",
+      "/dashboard/api/models/compare",
+      "/dashboard/api/config/restore",
+    ]) {
+      expect(js).toContain(path);
+    }
+  });
+
+  it("covers every id the script looks up, in every form it looks one up", () => {
+    // qs("...") calls, plus the tbody ids setRows() is handed as a string, so
+    // an id added to the script and forgotten in the HTML fails here rather
+    // than as a null deref in a browser.
+    const direct = new Set([...js.matchAll(/qs\("([A-Za-z0-9]+)"\)/g)].map((m) => m[1] as string));
+    const viaSetRows = new Set(
+      [...js.matchAll(/setRows\("([A-Za-z0-9]+)"/g)].map((m) => m[1] as string),
+    );
+    const referenced = new Set([...direct, ...viaSetRows]);
+    const listed = new Set(REFERENCED_IDS);
+
+    expect(direct.size).toBeGreaterThan(0);
+    // Nothing the script reaches is missing from the list...
+    expect([...referenced].filter((id) => !listed.has(id)).sort()).toEqual([]);
+    // ...and the list holds nothing beyond it except the two ids the script
+    // only ever reaches through the markup, not by name.
+    expect([...listed].filter((id) => !referenced.has(id)).sort()).toEqual([
+      "exportBtn",
+      "healthCard",
+    ]);
+  });
+
+  it("has an id in the page for every id in the list", () => {
+    for (const id of REFERENCED_IDS) {
+      expect(html).toContain(`id="${id}"`);
     }
   });
 });

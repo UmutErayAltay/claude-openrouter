@@ -1,13 +1,22 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { createProxyServer } from "../src/server/index.js";
-import { DEFAULT_CONFIG, saveKey, type Config, type ModelEntry } from "../src/config.js";
-import type { AgentOptions } from "../src/agentTemplate.js";
+import {
+  DEFAULT_CONFIG,
+  listConfigHistory,
+  saveConfig,
+  saveKey,
+  type Config,
+  type ModelEntry,
+} from "../src/config.js";
+import { renderAgent, type AgentOptions } from "../src/agentTemplate.js";
 import type { AgentSummary } from "../src/agentDiscovery.js";
+import { resetAlertState } from "../src/alerts.js";
 import type { TestModelResult } from "../src/modelTest.js";
 import type { UsageRecord } from "../src/usageLog.js";
 import { recordRequest, resetMetrics, type MetricsSummary } from "../src/metrics.js";
@@ -19,6 +28,8 @@ let proxyUrl: string;
 
 let models: ModelEntry[];
 let hasKey: boolean;
+let budget: Config["budget"];
+let alerts: Config["alerts"];
 let keyResponse: () => { status: number; body: unknown };
 let savedConfigs: Config[];
 let syncCalls: ModelEntry[][];
@@ -35,14 +46,108 @@ let testModelResponse: TestModelResult;
 let stopCalls: number;
 let restartCalls: number;
 let requestedLogLines: number[];
+/** Isolated agents root for the endpoints that call into the real agentDiscovery. */
+let agentsRoot: string;
+/** Resolved per request by the injected loadConfig, so tests can see mutations. */
+let currentConfig: Config;
+/** Cache key for the fake upstream catalog (the real one caches for 10 minutes). */
+let baseUrlSuffix = "/api/v1";
+let catalogFreshness = 0;
+/** URL -> canned answer, for the endpoints that reach upstream through global fetch. */
+let upstreamAnswers: Record<string, { status: number; body: unknown }>;
+const originalFetch = globalThis.fetch;
+const originalEnvKey = process.env.OPENROUTER_API_KEY;
+
+function jsonAnswer(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function readFileText(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+/** Sets the shared env key the resolution order reads first, then clears it. */
+function withEnvApiKey<T>(value: string | undefined, run: () => T): T {
+  const previous = process.env.OPENROUTER_API_KEY;
+  if (value === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = value;
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previous;
+  }
+}
+
+/**
+ * Stands in for globalThis.fetch while a test drives the endpoints that reach
+ * OpenRouter through it. Answers a canned response for the fixture's own
+ * base url (which the endpoint composes after loadConfig) and passes
+ * everything else — the dashboard itself, and the fixture server's /key,
+ * /models and /endpoints routes — through the real fetch. The one OpenRouter
+ * route the fixture has no handler for is rejected, so no test can reach the
+ * real network.
+ */
+function fetchStub(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const pathname = new URL(url).pathname;
+  const answer = upstreamAnswers[url] ?? upstreamAnswers[pathname];
+  if (answer) return Promise.resolve(jsonAnswer(answer.status, answer.body));
+
+  if (pathname.endsWith("/chat/completions")) {
+    return Promise.reject(new Error(`stubbed fetch got an unexpected url: ${url}`));
+  }
+  // Everything else — the dashboard itself, and the fixture server's own
+  // /key, /models and /endpoints routes — goes through the real fetch.
+  return originalFetch(input, init);
+}
+
+/**
+ * Points the catalog endpoint at a fake upstream. getCachedCatalog keys its
+ * cache on the base url, so each fixture gets a fresh one; otherwise the
+ * previous test's catalog would be served instead of the stub's.
+ */
+function stubCatalogFetch(models: Record<string, unknown>[]): void {
+  catalogFreshness += 1;
+  baseUrlSuffix = `/api/v1/probe-${catalogFreshness}`;
+  upstreamAnswers[`${upstreamUrl}${baseUrlSuffix}/models`] = { status: 200, body: { data: models } };
+}
+
+/** What renderAgent() writes plus a hand-authored key nobody manages. */
+function agentFixture(name: string, modelId: string): string {
+  return [
+    "---",
+    `name: ${name}`,
+    `description: Tek dosya uygulayicisi`,
+    `model: ${modelId}`,
+    "tools: Read, Edit, Write",
+    "permissionMode: acceptEdits",
+    "maxTurns: 30",
+    "---",
+    "",
+    `Sen ${modelId} uzerinde calisan bir uygulayicisin.`,
+    "",
+    "Kurallar:",
+    "",
+    "1. Sadece sana verilen dosyayi degistir.",
+    "",
+  ].join("\n");
+}
 
 function config(): Config {
   return {
     ...DEFAULT_CONFIG,
     openrouterApiKey: hasKey ? "sk-or-test" : undefined,
-    openrouterBaseUrl: `${upstreamUrl}/api/v1`,
+    openrouterBaseUrl: `${upstreamUrl}${baseUrlSuffix}`,
     anthropicBaseUrl: upstreamUrl,
     models,
+    // The budget and alerts endpoints read their thresholds off this object,
+    // so unlike port or the base urls they can't be faked per request.
+    budget,
+    alerts,
   };
 }
 
@@ -82,7 +187,12 @@ beforeAll(async () => {
   upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
 
   proxy = createProxyServer({
-    loadConfig: config,
+    // One object per request, kept in `currentConfig` so a test can read back
+    // what an endpoint mutated on it; the real handler does the same.
+    loadConfig: () => {
+      currentConfig = config();
+      return currentConfig;
+    },
     dashboard: {
       saveConfig: (cfg) => {
         savedConfigs.push(cfg);
@@ -143,6 +253,7 @@ afterAll(async () => {
 
 let keyDir: string;
 const originalKeyDir = process.env.CLAUDE_OPENROUTER_DIR;
+const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
 
 beforeEach(() => {
   // keySource()/resolveOpenRouterKey() read the real key file from disk;
@@ -153,6 +264,8 @@ beforeEach(() => {
 
   models = [];
   hasKey = true;
+  budget = undefined;
+  alerts = undefined;
   keyResponse = () => ({
     status: 200,
     body: {
@@ -185,12 +298,30 @@ beforeEach(() => {
   stopCalls = 0;
   restartCalls = 0;
   requestedLogLines = [];
+
+  // agentDiscovery resolves the *user* scope through CLAUDE_CONFIG_DIR and the
+  // *project* scope through process.cwd(); CLAUDE_CONFIG_DIR is the lever that
+  // keeps GET/POST /dashboard/api/agents/* off the machine's real ~/.claude/agents.
+  agentsRoot = mkdtempSync(join(tmpdir(), "cor-dashboard-agents-"));
+  process.env.CLAUDE_CONFIG_DIR = agentsRoot;
+
+  resetAlertState();
+  resetMetrics();
+  upstreamAnswers = {};
+  vi.stubGlobal("fetch", fetchStub);
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   rmSync(keyDir, { recursive: true, force: true });
+  rmSync(agentsRoot, { recursive: true, force: true });
   if (originalKeyDir === undefined) delete process.env.CLAUDE_OPENROUTER_DIR;
   else process.env.CLAUDE_OPENROUTER_DIR = originalKeyDir;
+  if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+  if (originalEnvKey === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = originalEnvKey;
+  globalThis.fetch = originalFetch;
 });
 
 async function getJson(path: string, headers: Record<string, string> = {}) {
@@ -582,3 +713,475 @@ describe("local-only guard", () => {
     expect(status).toBe(200);
   });
 });
+
+describe("/dashboard/api/settings", () => {
+  it("GET serves the stored budget and alerts", async () => {
+    const { status, body } = await getJson("/dashboard/api/settings");
+    expect(status).toBe(200);
+    // JSON.stringify drops undefined values, so an unconfigured section simply
+    // isn't in the payload — which is what the dashboard's `|| {}` handles.
+    expect(body).toEqual({});
+  });
+
+  it("GET serves both sections as configured", async () => {
+    budget = { dailyUsd: 5, action: "block" };
+    alerts = { errorRatePct: 10 };
+
+    const { status, body } = await getJson("/dashboard/api/settings");
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      budget: { dailyUsd: 5, monthlyUsd: undefined, action: "block" },
+      alerts: { errorRatePct: 10, latencyP95Seconds: undefined, windowMinutes: undefined, webhookUrl: undefined },
+    });
+  });
+
+  it("POST stores a valid budget through saveConfig and echoes it back", async () => {
+    const { status, body } = await postJson("/dashboard/api/settings", {
+      budget: { dailyUsd: 5, monthlyUsd: 50, action: "block" },
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ budget: { dailyUsd: 5, monthlyUsd: 50, action: "block" }, alerts: undefined });
+    expect(savedConfigs).toHaveLength(1);
+    expect(savedConfigs[0]?.budget).toEqual({ dailyUsd: 5, monthlyUsd: 50, action: "block" });
+  });
+
+  it("POST stores a valid alerts section", async () => {
+    const { status, body } = await postJson("/dashboard/api/settings", {
+      alerts: { errorRatePct: 10, latencyP95Seconds: 30, windowMinutes: 60, webhookUrl: "https://hook.example/x" },
+    });
+
+    expect(status).toBe(200);
+    expect(body.alerts).toEqual({
+      errorRatePct: 10,
+      latencyP95Seconds: 30,
+      windowMinutes: 60,
+      webhookUrl: "https://hook.example/x",
+    });
+    expect(savedConfigs[0]?.alerts?.errorRatePct).toBe(10);
+  });
+
+  it("POST 400s an invalid budget action and never saves", async () => {
+    const { status, body } = await postJson("/dashboard/api/settings", {
+      budget: { action: "yok" },
+    });
+    expect(status).toBe(400);
+    expect(body.error).toContain("Gecersiz budget action");
+    expect(savedConfigs).toHaveLength(0);
+  });
+
+  it("POST 400s a negative number and a non-http webhook", async () => {
+    const negative = await postJson("/dashboard/api/settings", { budget: { dailyUsd: -1 } });
+    expect(negative.status).toBe(400);
+    expect(negative.body.error).toContain("budget.dailyUsd");
+
+    const webhook = await postJson("/dashboard/api/settings", {
+      alerts: { webhookUrl: "not-a-url" },
+    });
+    expect(webhook.status).toBe(400);
+    expect(webhook.body.error).toContain("alerts.webhookUrl");
+
+    expect(savedConfigs).toHaveLength(0);
+  });
+});
+
+describe("GET /dashboard/api/budget", () => {
+  it("spends today and this month against no caps configured", async () => {
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 3, stream: true },
+      { ts: fakeNow - 40 * 24 * 3600_000, model: "a", promptTokens: 1, completionTokens: 1, cost: 40, stream: true },
+    ];
+
+    const { status, body } = await getJson("/dashboard/api/budget");
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ todayUsd: 3, monthUsd: 3, level: "ok", exceeded: false });
+    // Unset caps are dropped by JSON.stringify rather than sent as null.
+    expect(Object.keys(body).sort()).toEqual(["exceeded", "level", "monthUsd", "todayUsd"]);
+  });
+
+  it("reads a cap the config already carries and warns at 80% of it", async () => {
+    budget = { dailyUsd: 4, action: "warn" };
+    fakeUsage = [{ ts: fakeNow, model: "a", promptTokens: 1, completionTokens: 1, cost: 3.5, stream: false }];
+
+    const { body } = await getJson("/dashboard/api/budget");
+    expect(body).toMatchObject({ todayUsd: 3.5, monthUsd: 3.5, dailyUsd: 4, level: "warn", exceeded: false });
+  });
+
+  it("reports level over and exceeded once the spend passes the cap", async () => {
+    budget = { dailyUsd: 4, action: "block" };
+    fakeUsage = [{ ts: fakeNow, model: "a", promptTokens: 1, completionTokens: 1, cost: 9, stream: false }];
+
+    const { body } = await getJson("/dashboard/api/budget");
+    expect(body).toMatchObject({ todayUsd: 9, level: "over", exceeded: true });
+  });
+
+  it("counts an earlier day of the same month toward monthUsd but not todayUsd", async () => {
+    // fakeNow is 2026-09-21, so 10 days back is still September.
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 3, stream: true },
+      { ts: fakeNow - 10 * 24 * 3600_000, model: "a", promptTokens: 1, completionTokens: 1, cost: 40, stream: true },
+    ];
+
+    const { body } = await getJson("/dashboard/api/budget");
+    expect(body).toMatchObject({ todayUsd: 3, monthUsd: 43 });
+  });
+
+  it("ignores a record from a previous month in both windows", async () => {
+    // 40 days before 2026-09-21 is in August: neither today nor this month.
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 3, stream: true },
+      { ts: fakeNow - 40 * 24 * 3600_000, model: "a", promptTokens: 1, completionTokens: 1, cost: 40, stream: true },
+    ];
+
+    const { body } = await getJson("/dashboard/api/budget");
+    expect(body).toMatchObject({ todayUsd: 3, monthUsd: 3, level: "ok" });
+  });
+
+  it("counts a record with no cost figure as zero rather than dropping it", async () => {
+    // A real usage log writes cost: null when the upstream omitted it.
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 1, completionTokens: 1, cost: null, stream: false },
+      { ts: fakeNow, model: "b", promptTokens: 1, completionTokens: 1, cost: 2, stream: false },
+    ];
+
+    const { body } = await getJson("/dashboard/api/budget");
+    expect(body).toMatchObject({ todayUsd: 2, monthUsd: 2 });
+  });
+});
+
+describe("GET /dashboard/api/alerts", () => {
+  it("serves the alert state as JSON with all three fields", async () => {
+    const { status, body } = await getJson("/dashboard/api/alerts");
+    expect(status).toBe(200);
+    expect(body).toEqual({ lastFiredAt: null, lastReason: null, lastError: null });
+  });
+});
+
+describe("GET /dashboard/api/metrics-recent", () => {
+  it("serves recent requests, errors, the timeline and the 1h error rate", async () => {
+    try {
+      recordRequest({ model: "openai/gpt-5", outcome: "ok", durationSeconds: 1 });
+      recordRequest({ model: "openai/gpt-5", outcome: "upstream_error", durationSeconds: 2, error: "500" });
+
+      const { status, body } = await getJson("/dashboard/api/metrics-recent");
+
+      expect(status).toBe(200);
+      expect(body).toHaveProperty("recent");
+      expect(body).toHaveProperty("errors");
+      expect(body).toHaveProperty("timeline");
+      expect(body).toHaveProperty("errorRate1h");
+
+      const recent = body.recent as { model: string; outcome: string }[];
+      expect(recent.map((entry) => entry.outcome)).toEqual(["upstream_error", "ok"]);
+
+      const errors = body.errors as { model: string; error?: string }[];
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.error).toBe("500");
+
+      const timeline = body.timeline as { model: string; count: number; errors: number }[];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]).toMatchObject({ model: "openai/gpt-5", count: 2, errors: 1 });
+
+      expect(body.errorRate1h).toBe(0.5);
+    } finally {
+      resetMetrics();
+    }
+  });
+
+  it("reports a null error rate and empty collections when nothing was requested", async () => {
+    resetMetrics();
+    const { body } = await getJson("/dashboard/api/metrics-recent");
+    expect(body).toEqual({ recent: [], errors: [], timeline: [], errorRate1h: null });
+  });
+});
+
+describe("config history", () => {
+  it("GET lists the snapshots, newest first", async () => {
+    saveConfig({ ...DEFAULT_CONFIG, port: 9000 });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    saveConfig({ ...DEFAULT_CONFIG, port: 9001, models: [{ id: "a" }] });
+
+    const { status, body } = await getJson("/dashboard/api/config/history");
+
+    expect(status).toBe(200);
+    const history = body.history as { file: string; models: number; size: number; savedAt: string }[];
+    expect(history).toHaveLength(1);
+    // The single snapshot is the port 9000 config; port 9001 is still live.
+    expect(history[0]).toMatchObject({ models: 0 });
+    expect(history[0]?.size).toBeGreaterThan(0);
+    expect(history[0]?.file).toMatch(/\.json$/);
+    expect(history[0]?.savedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}\.\d{3}Z$/);
+    expect(history[0]?.file).toBe(listConfigHistory()[0]?.file);
+  });
+
+  it("counts the models in each snapshot", async () => {
+    saveConfig({ ...DEFAULT_CONFIG, port: 9000, models: [{ id: "ilk" }] });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    saveConfig({ ...DEFAULT_CONFIG, port: 9001, models: [{ id: "a" }, { id: "b" }] });
+
+    const { body } = await getJson("/dashboard/api/config/history");
+    const history = body.history as { models: number }[];
+    expect(history).toHaveLength(1);
+    expect(history[0]?.models).toBe(1);
+  });
+
+  it("POST 400s a name that isn't a plain .json history entry", async () => {
+    for (const file of ["../config.json", "a/b.json", "config.json.tmp", ""]) {
+      const { status } = await postJson("/dashboard/api/config/restore", { file });
+      expect(status).toBe(400);
+    }
+    const missing = await postJson("/dashboard/api/config/restore", {
+      file: "2020-01-01T00-00-00.000Z.json",
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toContain("Config gecmisi bulunamadi");
+  });
+
+  it("POST 400s when no file is given at all", async () => {
+    const { status, body } = await postJson("/dashboard/api/config/restore", {});
+    expect(status).toBe(400);
+    expect(body.error).toBe("file zorunlu.");
+  });
+
+  it("POST updates the live config object in place for a valid snapshot", async () => {
+    saveConfig({ ...DEFAULT_CONFIG, port: 9000, models: [{ id: "ilk" }] });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    saveConfig({ ...DEFAULT_CONFIG, port: 9001, models: [{ id: "ikinci" }] });
+    const oldest = listConfigHistory()[0]?.file ?? "";
+
+    const { status, body } = await postJson("/dashboard/api/config/restore", { file: oldest });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ restored: true, models: 1 });
+    // Object.assign, not a rebind: the snapshot's models land in the very object
+    // the proxy still holds, instead of a copy only the response can see.
+    expect(currentConfig.models).toEqual([{ id: "ilk" }]);
+    expect(currentConfig.port).toBe(9000);
+    expect(currentConfig.budget).toBeUndefined();
+  });
+});
+
+describe("POST /dashboard/api/models/compare", () => {
+  it("400s a single id", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    const { status, body } = await postJson("/dashboard/api/models/compare", {
+      ids: ["openai/gpt-5"],
+    });
+    expect(status).toBe(400);
+    expect(body.error).toContain("2 ile 4");
+  });
+
+  it("400s an id that isn't in the config", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    const { status, body } = await postJson("/dashboard/api/models/compare", {
+      ids: ["openai/gpt-5", "yok/olmayan"],
+    });
+    expect(status).toBe(400);
+    expect(body.error).toContain("yok/olmayan");
+  });
+
+  it("400s a non-string id", async () => {
+    models = [{ id: "openai/gpt-5" }];
+    const { status } = await postJson("/dashboard/api/models/compare", {
+      ids: ["openai/gpt-5", 7],
+    });
+    expect(status).toBe(400);
+  });
+
+  it("400s more than four ids", async () => {
+    models = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }];
+    const { status } = await postJson("/dashboard/api/models/compare", {
+      ids: ["a", "b", "c", "d", "e"],
+    });
+    expect(status).toBe(400);
+  });
+
+  it("runs the two configured models and returns a result per model", async () => {
+    models = [{ id: "openai/gpt-5" }, { id: "qwen/qwen3-max" }];
+    // compareModels resolves the key the same way fetchCreditInfo does, so an
+    // ambient env key would send it to the loopback; supply one explicitly.
+    const openAiUrl = `${upstreamUrl}${baseUrlSuffix}/chat/completions`;
+    upstreamAnswers[openAiUrl] = {
+      status: 200,
+      body: {
+        id: "gen-1",
+        choices: [{ message: { content: "Merhaba!" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 12, completion_tokens: 4, cost: 0.0002 },
+      },
+    };
+
+    const { status, body } = await withEnvApiKey("sk-or-test", async () =>
+      postJson("/dashboard/api/models/compare", {
+        ids: ["openai/gpt-5", "qwen/qwen3-max"],
+        prompt: "tek kelime",
+      }),
+    );
+
+    expect(status).toBe(200);
+    const results = body.results as { model: string; result: TestModelResult }[];
+    expect(results.map((entry) => entry.model)).toEqual(["openai/gpt-5", "qwen/qwen3-max"]);
+    for (const entry of results) {
+      expect(entry.result).toMatchObject({
+        ok: true,
+        text: "Merhaba!",
+        promptTokens: 12,
+        completionTokens: 4,
+      });
+    }
+    // Both calls go through the dashboard's own usage recorder.
+    expect(dashboardRecorded.map((entry) => entry.model).sort()).toEqual([
+      "openai/gpt-5",
+      "qwen/qwen3-max",
+    ]);
+  });
+});
+
+describe("GET /dashboard/api/agents/get", () => {
+  it("400s when no file is given", async () => {
+    const { status, body } = await getJson("/dashboard/api/agents/get");
+    expect(status).toBe(400);
+    expect(body.error).toBe("file gerekli.");
+  });
+
+  it("400s a file that doesn't exist", async () => {
+    const { status, body } = await getJson(
+      `/dashboard/api/agents/get?file=${encodeURIComponent(
+        join(agentsRoot, "agents", "yok.md"),
+      )}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toContain("Dosya bulunamadi");
+  });
+
+  it("serves the frontmatter and body of a real agent file in the temp dir", async () => {
+    mkdirSync(join(agentsRoot, "agents"), { recursive: true });
+    const file = join(agentsRoot, "agents", "kodcu.md");
+    writeFileSync(file, renderAgent({ name: "kodcu", modelId: "openai/gpt-5", scope: "user" }));
+
+    const { status, body } = await getJson(
+      `/dashboard/api/agents/get?file=${encodeURIComponent(file)}`,
+    );
+
+    expect(status).toBe(200);
+    const agent = body.agent as { file: string; name: string; model: string; tools: string; body: string };
+    expect(agent.file).toBe(file);
+    expect(agent.name).toBe("kodcu");
+    expect(agent.model).toBe("openai/gpt-5");
+    expect(agent.tools).toBe("Read, Edit, Write");
+    expect(agent.body).toContain("Sen openai/gpt-5 uzerinde calisan bir uygulayicisin.");
+  });
+
+  it("400s a path outside the known agents directories", async () => {
+    const outside = join(agentsRoot, "disarida.md");
+    writeFileSync(outside, "---\nname: x\n---\nbody\n");
+
+    const { status, body } = await getJson(
+      `/dashboard/api/agents/get?file=${encodeURIComponent(outside)}`,
+    );
+    expect(status).toBe(400);
+    expect(body.error).toContain("duzenlenemez");
+  });
+});
+
+describe("POST /dashboard/api/agents/update", () => {
+  it("400s when no file is given", async () => {
+    const { status, body } = await postJson("/dashboard/api/agents/update", { model: "x" });
+    expect(status).toBe(400);
+    expect(body.error).toBe("file zorunlu.");
+  });
+
+  it("400s a file that doesn't exist", async () => {
+    const { status, body } = await postJson("/dashboard/api/agents/update", {
+      file: join(agentsRoot, "agents", "yok.md"),
+    });
+    expect(status).toBe(400);
+    expect(body.error).toContain("Dosya bulunamadi");
+  });
+
+  it("400s a path outside the known agents directories", async () => {
+    const outside = join(agentsRoot, "disarida.md");
+    writeFileSync(outside, "---\nname: x\n---\nbody\n");
+
+    const { status } = await postJson("/dashboard/api/agents/update", {
+      file: outside,
+      model: "openai/gpt-5",
+    });
+    expect(status).toBe(400);
+    expect(readFileText(outside)).toContain("name: x");
+  });
+});
+
+describe("GET /dashboard/api/catalog free tier", () => {
+  // OpenRouter prices per token as strings; the API reports dollars per million.
+  const free = { pricing: { prompt: "0", completion: "0" } };
+  const paid = { pricing: { prompt: "0.0000015", completion: "0.000006" } };
+
+  it("keeps only the models priced at $0 on both sides, with per-million prices", async () => {
+    stubCatalogFetch([
+      { id: "a/free-model", name: "Free model", context_length: 8000, ...free },
+      { id: "z/free-model", name: "Free model", context_length: 8000, ...free },
+      { id: "openai/gpt-5-free", name: "GPT-5", context_length: 400000, ...paid },
+      { id: "free-model-2", name: "Free model 2", context_length: 8000, ...free },
+    ]);
+
+    const { status, body } = await getJson("/dashboard/api/catalog?q=free&free=1");
+
+    expect(status).toBe(200);
+    const results = body.results as { id: string; promptPrice: number; completionPrice: number }[];
+    expect(results.map((entry) => entry.id)).toEqual(["a/free-model", "z/free-model", "free-model-2"]);
+    for (const entry of results) expect(entry).toMatchObject({ promptPrice: 0, completionPrice: 0 });
+  });
+
+  it("does not count a free prompt billed on output, or an unpriced entry, as free", async () => {
+    stubCatalogFetch([
+      { id: "a/free-model", name: "Free model", ...free },
+      { id: "b/free-output-billed", name: "Free-ish", pricing: { prompt: "0", completion: "0.000001" } },
+      { id: "c/free-unpriced", name: "No pricing" },
+    ]);
+
+    const { body } = await getJson("/dashboard/api/catalog?q=free&free=1");
+    expect((body.results as { id: string }[]).map((entry) => entry.id)).toEqual(["a/free-model"]);
+  });
+
+  it("browses the whole tier, not a search, when only the free flag is set", async () => {
+    stubCatalogFetch([
+      { id: "a/free-model", name: "Free model", ...free },
+      { id: "openai/gpt-5", name: "GPT-5", ...paid },
+      { id: "z/free-model", name: "Free model", ...free },
+    ]);
+
+    // An empty q with free=1 is the free-tier browser: no id matching, and an
+    // empty list would wrongly tell the user there is nothing to pick.
+    const { body } = await getJson("/dashboard/api/catalog?q=&free=1");
+    expect((body.results as { id: string }[]).map((entry) => entry.id)).toEqual(["a/free-model", "z/free-model"]);
+  });
+
+  it("attaches real per-million prices, or null when unpriced, without free=1", async () => {
+    stubCatalogFetch([
+      { id: "openai/gpt-5", name: "GPT-5", context_length: 400000, ...paid },
+      { id: "openai/gpt-5-unpriced", name: "GPT-5 (no price)" },
+    ]);
+
+    const { body } = await getJson("/dashboard/api/catalog?q=gpt");
+    const results = body.results as { id: string; promptPrice: number | null; completionPrice: number | null }[];
+    expect(results.map((entry) => entry.id)).toEqual(["openai/gpt-5", "openai/gpt-5-unpriced"]);
+    expect(results[0]).toMatchObject({ promptPrice: 1.5, completionPrice: 6 });
+    expect(results[1]).toMatchObject({ promptPrice: null, completionPrice: null });
+  });
+
+  it("caches the catalog per base url, so a second query doesn't refetch", async () => {
+    stubCatalogFetch([{ id: "a/free-model", name: "Free model", context_length: 8000, ...free }]);
+    await getJson("/dashboard/api/catalog?q=free&free=1");
+
+    upstreamAnswers[`${upstreamUrl}${baseUrlSuffix}/models`] = {
+      status: 500,
+      body: { error: "ikinci istek sunucuya gitmemeliydi" },
+    };
+
+    const { status, body } = await getJson("/dashboard/api/catalog?q=free&free=1");
+    expect(status).toBe(200);
+    expect((body.results as { id: string }[]).map((entry) => entry.id)).toEqual(["a/free-model"]);
+  });
+});
+
