@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { recordRequest, recordUsageMetrics, renderMetrics, resetMetrics } from "../src/metrics.js";
+import {
+  getMetricsSummary,
+  recordRequest,
+  recordUsageMetrics,
+  renderMetrics,
+  resetMetrics,
+} from "../src/metrics.js";
 
 beforeEach(() => {
   resetMetrics();
@@ -95,5 +101,79 @@ describe("renderMetrics", () => {
     expect(text).not.toContain("cor_requests_total{");
     expect(text).not.toContain("cor_tokens_total{");
     expect(text).not.toContain("cor_cost_usd_total{");
+  });
+});
+
+describe("getMetricsSummary", () => {
+  it("summarizes nothing as empty totals with a null success rate, not NaN", () => {
+    const summary = getMetricsSummary();
+
+    expect(summary.models).toEqual([]);
+    expect(summary.totals).toEqual({ ok: 0, errors: 0, total: 0, successRate: null });
+    expect(Number.isNaN(summary.totals.successRate)).toBe(false);
+  });
+
+  it("keys every outcome off a model, zeros included, and derives the success rate", () => {
+    for (let i = 0; i < 3; i++) {
+      recordRequest({ model: "openai/gpt-5", outcome: "ok", durationSeconds: 1 });
+    }
+    recordRequest({ model: "openai/gpt-5", outcome: "upstream_error", durationSeconds: 1 });
+    recordRequest({ model: "openai/gpt-5", outcome: "no_key", durationSeconds: 1 });
+
+    const summary = getMetricsSummary();
+    expect(summary.models).toHaveLength(1);
+    expect(summary.models[0]?.requests).toEqual({
+      ok: 3,
+      upstream_error: 1,
+      network_error: 0,
+      no_key: 1,
+      stream_error: 0,
+    });
+    expect(summary.models[0]?.total).toBe(5);
+    expect(summary.totals).toMatchObject({ ok: 3, errors: 2, total: 5, successRate: 0.6 });
+  });
+
+  it("sorts models alphabetically regardless of recording order", () => {
+    recordRequest({ model: "b/vendor/model", outcome: "ok", durationSeconds: 1 });
+    recordRequest({ model: "a/vendor/model", outcome: "ok", durationSeconds: 1 });
+
+    expect(getMetricsSummary().models.map((entry) => entry.model)).toEqual([
+      "a/vendor/model",
+      "b/vendor/model",
+    ]);
+  });
+
+  it("reads quantiles off the cumulative buckets and averages the raw durations", () => {
+    // Buckets accumulate upward: 0.4 fills le=0.5, 0.9 fills le=1, 45 fills le=60,
+    // so counts are [0,1,2,2,2,2,2,3,3,3] against a total of 3.
+    // p50 targets 1.5 -> first bucket at 2 is le=1; p95 targets 2.85 -> first bucket at 3 is le=60.
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 0.4 });
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 0.9 });
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 45 });
+
+    const entry = getMetricsSummary().models[0];
+    expect(entry?.avgDurationSeconds).toBeCloseTo(46.3 / 3, 10);
+    expect(entry?.p50Seconds).toBe(1);
+    expect(entry?.p95Seconds).toBe(60);
+  });
+
+  it("collapses both quantiles to the smallest bucket when every request is fast", () => {
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 0.05 });
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 0.01 });
+
+    const entry = getMetricsSummary().models[0];
+    expect(entry?.p50Seconds).toBe(0.1);
+    expect(entry?.p95Seconds).toBe(0.1);
+  });
+
+  it("returns an empty summary after resetMetrics", () => {
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 1 });
+    recordUsageMetrics({ model: "x", promptTokens: 1, completionTokens: 1, cost: 0.1 });
+    resetMetrics();
+
+    expect(getMetricsSummary()).toEqual({
+      models: [],
+      totals: { ok: 0, errors: 0, total: 0, successRate: null },
+    });
   });
 });

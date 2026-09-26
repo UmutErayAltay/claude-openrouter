@@ -10,6 +10,7 @@ import type { AgentOptions } from "../src/agentTemplate.js";
 import type { AgentSummary } from "../src/agentDiscovery.js";
 import type { TestModelResult } from "../src/modelTest.js";
 import type { UsageRecord } from "../src/usageLog.js";
+import { recordRequest, resetMetrics, type MetricsSummary } from "../src/metrics.js";
 
 let upstream: Server;
 let proxy: Server;
@@ -280,6 +281,27 @@ describe("GET /dashboard/api/usage", () => {
     const { body } = await getJson("/dashboard/api/usage?days=3&recent=5");
     expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
     expect((body.daily as unknown[]).length).toBe(3);
+  });
+});
+
+describe("GET /dashboard/api/metrics-summary", () => {
+  it("serves the live metrics counters as JSON", async () => {
+    resetMetrics();
+    try {
+      recordRequest({ model: "openai/gpt-5", outcome: "ok", durationSeconds: 1 });
+      recordRequest({ model: "openai/gpt-5", outcome: "upstream_error", durationSeconds: 1 });
+
+      const response = await fetch(`${proxyUrl}/dashboard/api/metrics-summary`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      const body = (await response.json()) as MetricsSummary;
+      expect(body.models[0]?.model).toBe("openai/gpt-5");
+      expect(body.models[0]?.total).toBe(2);
+      expect(body.totals).toEqual({ ok: 1, errors: 1, total: 2, successRate: 0.5 });
+    } finally {
+      resetMetrics();
+    }
   });
 });
 
