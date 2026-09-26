@@ -104,6 +104,12 @@ export interface ModelEntry {
   wasFree?: boolean;
   /** Price drift detection: if present, model is blocked (promotion ended). */
   priceDrift?: { detectedAt: number; promptPrice: number | null; completionPrice: number | null };
+  /**
+   * Another configured model id to route to instead, once this one's
+   * account-wide daily free-tier quota looks exhausted (see quotaGuard.ts).
+   * Only meaningful when wasFree is true; ignored otherwise.
+   */
+  fallbackModel?: string;
 }
 
 /** Spend caps, in dollars. `action` decides whether hitting one warns or blocks. */

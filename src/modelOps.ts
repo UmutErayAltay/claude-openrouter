@@ -31,6 +31,7 @@ export interface ModelInput {
   quantizations?: string[] | null;
   wasFree?: boolean | null;
   priceDrift?: null;
+  fallbackModel?: string | null;
 }
 
 function validateReasoning(value: string | null | undefined): ReasoningEffort | undefined {
@@ -218,6 +219,8 @@ export function mergeModelEntry(existing: ModelEntry, patch: ModelInput): ModelE
   if (patch.wasFree === null) delete merged.wasFree;
   else if (patch.wasFree !== undefined) merged.wasFree = patch.wasFree;
   if (patch.priceDrift === null) delete merged.priceDrift;
+  if (patch.fallbackModel === null) delete merged.fallbackModel;
+  else if (patch.fallbackModel !== undefined) merged.fallbackModel = patch.fallbackModel;
 
   return merged;
 }

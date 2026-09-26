@@ -147,6 +147,7 @@ describe("getMetricsSummary", () => {
       stream_error: 0,
       budget_blocked: 0,
       price_drift_blocked: 0,
+      quota_exhausted: 0,
     });
     expect(summary.models[0]?.total).toBe(5);
     expect(summary.totals).toMatchObject({ ok: 3, errors: 2, total: 5, successRate: 0.6 });

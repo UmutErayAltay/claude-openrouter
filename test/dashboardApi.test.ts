@@ -554,6 +554,7 @@ describe("GET /dashboard/api/health", () => {
     expect(checks.every((check) => check.ok)).toBe(true);
     expect(checks.map((check) => check.id).sort()).toEqual([
       "credit",
+      "free_quota",
       "key",
       "model_config",
       "models",

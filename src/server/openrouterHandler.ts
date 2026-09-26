@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import type { Config, ModelEntry } from "../config.js";
 import { markModelNonStreaming, resolveOpenRouterKey } from "../config.js";
+import { looksLikeFreeQuotaError, markFreeQuotaExhausted } from "../quotaGuard.js";
 import { anthropicToOpenAI } from "../translate/anthropicToOpenAI.js";
 import { anthropicError, openRouterErrorToAnthropic } from "../translate/errors.js";
 import { openAIToAnthropic } from "../translate/openAIToAnthropic.js";
@@ -92,6 +93,7 @@ export async function handleOpenRouter(
 
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
+    if (looksLikeFreeQuotaError(text)) markFreeQuotaExhausted();
     const body = openRouterErrorToAnthropic(upstream.status, text);
     sendJson(res, upstream.status, body);
     options.onError?.(body.error.message);
@@ -115,6 +117,7 @@ export async function handleOpenRouter(
   const raw = (await upstream.json().catch(() => ({}))) as OpenAIResponse;
   if (raw.error) {
     const message = `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`;
+    if (looksLikeFreeQuotaError(message)) markFreeQuotaExhausted();
     sendJson(res, 502, anthropicError(502, message));
     options.onError?.(message);
     return "upstream_error";

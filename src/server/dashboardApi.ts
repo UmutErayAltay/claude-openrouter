@@ -28,6 +28,7 @@ import {
   revertModelPicker as revertModelPickerImpl,
   syncModelPicker as syncModelPickerImpl,
 } from "../claudeSettings.js";
+import { isFreeQuotaExhausted } from "../quotaGuard.js";
 import {
   fetchCatalog,
   fetchEndpoints,
@@ -392,6 +393,15 @@ export async function handleDashboard(
         label: "Model ayarlari gecerli",
         ok: modelProblems.length === 0,
         hint: modelProblems.length > 0 ? modelProblems.join(" ") : undefined,
+      },
+      {
+        id: "free_quota",
+        label: "Ucretsiz model gunluk kotasi",
+        ok: !isFreeQuotaExhausted(),
+        hint: isFreeQuotaExhausted()
+          ? "OpenRouter'in gunluk ucretsiz-model kotasi (free-models-per-day) bugun tukendi, " +
+            "UTC 00:00'da sifirlanir. fallbackModel tanimli modeller otomatik gecer."
+          : undefined,
       },
       ...driftChecks,
     ];

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createProxyServer, estimateInputTokens } from "../src/server/index.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 import { resetMetrics } from "../src/metrics.js";
+import { isFreeQuotaExhausted, markFreeQuotaExhausted, resetFreeQuotaGuard } from "../src/quotaGuard.js";
 
 /** Records what the proxy sent upstream so the tests can assert on it. */
 interface Capture {
@@ -659,6 +660,202 @@ describe("price drift blocking (price_drift_blocked)", () => {
     expect(metricsText).toContain('cor_requests_total{model="openai/gpt-5",outcome="price_drift_blocked"} 1');
 
     await new Promise<void>((resolve) => proxyWithDrift.close(() => resolve()));
+  });
+});
+
+describe("daily free-model quota (quota_exhausted + auto-fallback)", () => {
+  const quotaConfig = () => ({
+    ...DEFAULT_CONFIG,
+    openrouterApiKey: "sk-or-test",
+    openrouterBaseUrl: `${upstreamUrl}/api/v1`,
+    anthropicBaseUrl: upstreamUrl,
+    models: [
+      { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron", wasFree: true, maxOutputTokens: 8192 },
+      { id: "openai/gpt-5", label: "GPT-5", maxOutputTokens: 8192 },
+    ],
+  });
+
+  afterEach(() => {
+    resetFreeQuotaGuard();
+  });
+
+  it("detects OpenRouter's free-models-per-day error and marks the quota exhausted", async () => {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    const proxy = createProxyServer({ loadConfig: quotaConfig });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    respond = jsonUpstream(
+      {
+        error: {
+          message:
+            "Rate limit exceeded: free-models-per-day. Add 5 credits to unlock 1000 free model requests per day",
+        },
+      },
+      429,
+    );
+
+    expect(isFreeQuotaExhausted()).toBe(false);
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+    expect(response.status).toBe(429);
+    expect(isFreeQuotaExhausted()).toBe(true);
+
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  });
+
+  it("routes to fallbackModel once the quota is known exhausted, never reaching upstream for the primary", async () => {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    markFreeQuotaExhausted();
+
+    const proxy = createProxyServer({
+      loadConfig: () => ({
+        ...quotaConfig(),
+        models: [
+          {
+            id: "nvidia/nemotron-3-ultra-550b-a55b:free",
+            label: "Nemotron",
+            wasFree: true,
+            maxOutputTokens: 8192,
+            fallbackModel: "openai/gpt-5",
+          },
+          { id: "openai/gpt-5", label: "GPT-5", maxOutputTokens: 8192 },
+        ],
+      }),
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    respond = jsonUpstream({ choices: [{ message: { content: "gpt-5 cevap verdi" } }] });
+    captured = [];
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect((captured[0]?.body as { model?: string } | undefined)?.model).toBe("openai/gpt-5");
+
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  });
+
+  it("returns 429 quota_exhausted when no fallbackModel is configured", async () => {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    markFreeQuotaExhausted();
+
+    const proxy = createProxyServer({ loadConfig: quotaConfig });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    respond = jsonUpstream({ choices: [{ message: { content: "should not be called" } }] });
+    captured = [];
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+
+    const body = await response.json();
+    expect(response.status).toBe(429);
+    expect(body).toMatchObject({
+      type: "error",
+      error: { type: "rate_limit_error", message: expect.stringContaining("free-models-per-day") },
+    });
+    expect(captured).toHaveLength(0);
+
+    const metricsText = await (await fetch(`${url}/metrics`)).text();
+    expect(metricsText).toContain(
+      'cor_requests_total{model="nvidia/nemotron-3-ultra-550b-a55b:free",outcome="quota_exhausted"} 1',
+    );
+
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  });
+
+  it("does not gate a model that was never marked wasFree, even while the quota is exhausted", async () => {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    markFreeQuotaExhausted();
+
+    const proxy = createProxyServer({ loadConfig: quotaConfig });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    respond = jsonUpstream({ choices: [{ message: { content: "paid model cevap verdi" } }] });
+    captured = [];
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "openai/gpt-5",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured).toHaveLength(1);
+
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  });
+
+  it("gates a :free-suffixed model even without an explicit wasFree flag", async () => {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    markFreeQuotaExhausted();
+
+    const proxy = createProxyServer({
+      loadConfig: () => ({
+        ...quotaConfig(),
+        models: [
+          // No wasFree here on purpose: entries added before that field
+          // existed still carry OpenRouter's own ":free" id convention.
+          { id: "google/gemma-4-31b-it:free", label: "Gemma", maxOutputTokens: 8192 },
+        ],
+      }),
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    respond = jsonUpstream({ choices: [{ message: { content: "should not be called" } }] });
+    captured = [];
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemma-4-31b-it:free",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(captured).toHaveLength(0);
+
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
   });
 });
 

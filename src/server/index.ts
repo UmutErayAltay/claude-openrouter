@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Config } from "../config.js";
-import { loadConfig } from "../config.js";
+import { findModel, loadConfig } from "../config.js";
+import { isFreeQuotaExhausted } from "../quotaGuard.js";
 import { anthropicError } from "../translate/errors.js";
 import { systemToText } from "../translate/anthropicToOpenAI.js";
 import type { AnthropicRequest } from "../translate/types.js";
@@ -119,7 +120,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
     return;
   }
 
-  const route = routeFor(config, request.model);
+  let route = routeFor(config, request.model);
   if (route.target === "anthropic") {
     await passthroughToAnthropic(config, req, res, body);
     return;
@@ -128,6 +129,41 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
   if (path === "/v1/messages/count_tokens") {
     sendJson(res, 200, { input_tokens: estimateInputTokens(request) });
     return;
+  }
+
+  // OpenRouter's :free tier shares one account-wide daily quota; an agentic
+  // session can burn through it in a handful of turns. Once we've seen the
+  // quota reject a request today, route away from it automatically instead
+  // of failing every subsequent turn for the rest of the day.
+  // wasFree is set going forward (see modelOps.autofillFromCatalog), but a
+  // model added before that existed has no such flag; the ":free" suffix is
+  // OpenRouter's own convention and catches those too.
+  const isFreeTierModel = route.entry.wasFree || route.entry.id.endsWith(":free");
+  if (isFreeTierModel && isFreeQuotaExhausted()) {
+    const fallback = route.entry.fallbackModel ? findModel(config, route.entry.fallbackModel) : undefined;
+    if (fallback) {
+      log(`gunluk ucretsiz kota tukendi: ${route.entry.id} -> ${fallback.id} (fallbackModel)`);
+      route = { target: "openrouter", entry: fallback };
+    } else {
+      log(`gunluk ucretsiz kota tukendi: ${route.entry.id} engellendi (fallbackModel tanimli degil)`);
+      sendJson(res, 429, {
+        type: "error",
+        error: {
+          type: "rate_limit_error",
+          message:
+            `cor: '${route.entry.id}' icin OpenRouter'in gunluk ucretsiz-model kotasi (free-models-per-day) ` +
+            "tukenmis gorunuyor. Yarin UTC 00:00'da sifirlanir, ya da bu modele dashboard'dan bir " +
+            "fallbackModel tanimla.",
+        },
+      });
+      recordRequest({
+        model: route.entry.id,
+        outcome: "quota_exhausted",
+        durationSeconds: 0,
+        error: "cor: gunluk ucretsiz kota tukendi",
+      });
+      return;
+    }
   }
 
   if (config.budget?.action === "block") {
