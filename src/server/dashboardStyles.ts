@@ -389,6 +389,15 @@ td.mono, th.mono { font-family: var(--mono); white-space: nowrap; }
 /* Wide tables scroll inside their own box instead of wrapping numbers
    onto three lines or pushing the page sideways. */
 .table-scroll { overflow-x: auto; }
+/* "Son istekler" gets a fixed height and its own scrollbar so a long
+   history doesn't stretch the whole page; the header stays put. */
+.recent-scroll { max-height: 360px; overflow-y: auto; }
+.recent-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  z-index: 1;
+}
 tbody tr:hover td { background: var(--bg-elev-2); }
 .empty-row td {
   color: var(--text-faint);

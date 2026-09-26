@@ -157,7 +157,8 @@ describe("yeniden tasarim", () => {
   });
 
   it("wraps each wide table tbody in a .table-scroll box", () => {
-    const opens = [...html.matchAll(/<div class="table-scroll">/g)].map((m) => m.index!);
+    // The wrapper may carry extra classes (e.g. recent-scroll), so match the prefix.
+    const opens = [...html.matchAll(/<div class="table-scroll[" ]/g)].map((m) => m.index!);
     expect(opens.length).toBeGreaterThanOrEqual(SCROLL_WRAPPED.length);
     for (const id of SCROLL_WRAPPED) {
       const tbody = html.indexOf(`id="${id}"`);

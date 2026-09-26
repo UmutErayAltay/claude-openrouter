@@ -84,7 +84,7 @@ export function buildDashboardHtml(): string {
           <option value="">Tum modeller</option>
         </select>
       </div>
-      <div class="table-scroll">
+      <div class="table-scroll recent-scroll">
       <table>
         <thead><tr><th>Zaman</th><th>Model</th><th class="mono">Token</th><th class="mono">Maliyet</th></tr></thead>
         <tbody id="recentBody"><tr class="empty-row"><td colspan="4">yukleniyor...</td></tr></tbody>
