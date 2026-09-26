@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createProxyServer, estimateInputTokens } from "../src/server/index.js";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 import { resetMetrics } from "../src/metrics.js";
@@ -42,7 +45,22 @@ function config(): Config {
   };
 }
 
+/**
+ * Key resolution prefers OPENROUTER_API_KEY, then the key file, then the
+ * legacy config field these tests inject — so a real key file at the default
+ * location on the machine running the tests would silently win over
+ * "sk-or-test". Point the data dir at an empty temp dir to keep the tests
+ * hermetic.
+ */
+const originalDir = process.env.CLAUDE_OPENROUTER_DIR;
+const originalEnvKey = process.env.OPENROUTER_API_KEY;
+let isolatedDir: string;
+
 beforeAll(async () => {
+  isolatedDir = mkdtempSync(join(tmpdir(), "cor-server-"));
+  process.env.CLAUDE_OPENROUTER_DIR = isolatedDir;
+  delete process.env.OPENROUTER_API_KEY;
+
   upstream = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -78,6 +96,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve) => proxy.close(() => resolve()));
   await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  rmSync(isolatedDir, { recursive: true, force: true });
+  if (originalDir === undefined) delete process.env.CLAUDE_OPENROUTER_DIR;
+  else process.env.CLAUDE_OPENROUTER_DIR = originalDir;
+  if (originalEnvKey !== undefined) process.env.OPENROUTER_API_KEY = originalEnvKey;
 });
 
 function jsonUpstream(body: unknown, status = 200) {
