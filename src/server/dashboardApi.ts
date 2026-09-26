@@ -36,6 +36,8 @@ import {
 } from "../openrouterCatalog.js";
 import {
   addModel,
+  checkFreeTierDrift,
+  type FreeTierDrift,
   ModelOpError,
   removeModel,
   updateModel,
@@ -343,6 +345,23 @@ export async function handleDashboard(
     const modelProblems = config.models.flatMap((model) =>
       validateModelEntry(model).map((problem) => `${model.id}: ${problem}`),
     );
+    let driftDetected: FreeTierDrift[] = [];
+    try {
+      const catalog = await getCachedCatalog(config);
+      driftDetected = checkFreeTierDrift(config, catalog);
+      if (driftDetected.length > 0) deps.saveConfig(config);
+    } catch {
+      // Katalog o an alinamazsa drift kontrolu bu turda atlanir, checks listesi degismez.
+    }
+    const driftChecks = config.models
+      .filter((model) => model.priceDrift)
+      .map((model) => ({
+        id: `free_tier_${model.id}`,
+        label: `${model.label || model.id}: artik ucretli`,
+        ok: false,
+        hint: `$${model.priceDrift!.promptPrice ?? "?"}/M girdi, $${model.priceDrift!.completionPrice ?? "?"}/M cikti ` +
+          `— promosyon bitmis olabilir. Dashboard'dan guncelle veya kaldir.`,
+      }));
     const checks = [
       {
         id: "key",
@@ -374,6 +393,7 @@ export async function handleDashboard(
         ok: modelProblems.length === 0,
         hint: modelProblems.length > 0 ? modelProblems.join(" ") : undefined,
       },
+      ...driftChecks,
     ];
     sendJson(res, 200, { checks });
     return true;

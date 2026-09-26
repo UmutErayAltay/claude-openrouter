@@ -586,6 +586,63 @@ describe("GET /dashboard/api/health", () => {
     expect(byId.model_config?.ok).toBe(false);
     expect(byId.model_config?.hint).toMatch(/openai\/gpt-5/);
   });
+
+  it("includes free_tier_ checks for models with priceDrift detected", async () => {
+    models = [
+      { id: "openai/gpt-5", label: "GPT-5" },
+      { id: "free/model", label: "Free Model", wasFree: true },
+    ];
+    syncedFlag = true;
+
+    // Stub catalog to return paid prices for the free model
+    stubCatalogFetch([
+      { id: "openai/gpt-5", name: "GPT-5", context_length: 400000, pricing: { prompt: "0.0000015", completion: "0.000006" } },
+      { id: "free/model", name: "Free Model", context_length: 8000, pricing: { prompt: "0.0000015", completion: "0.000006" } },
+    ]);
+
+    const { status, body } = await getJson("/dashboard/api/health");
+    expect(status).toBe(200);
+    const checks = body.checks as { id: string; ok: boolean; hint?: string }[];
+    const freeTierChecks = checks.filter((c) => c.id.startsWith("free_tier_"));
+    expect(freeTierChecks).toHaveLength(1);
+    expect(freeTierChecks[0]?.id).toBe("free_tier_free/model");
+    expect(freeTierChecks[0]?.ok).toBe(false);
+    expect(freeTierChecks[0]?.hint).toContain("$1.5/M girdi");
+    expect(freeTierChecks[0]?.hint).toContain("$6/M cikti");
+    // Config should have been saved (priceDrift written)
+    expect(savedConfigs).toHaveLength(1);
+  });
+
+  it("does not include free_tier_ check when model is still free in catalog", async () => {
+    models = [{ id: "free/model", label: "Free Model", wasFree: true }];
+    syncedFlag = true;
+
+    // Stub catalog to return free prices
+    stubCatalogFetch([
+      { id: "free/model", name: "Free Model", context_length: 8000, pricing: { prompt: "0", completion: "0" } },
+    ]);
+
+    const { body } = await getJson("/dashboard/api/health");
+    const checks = body.checks as { id: string; ok: boolean }[];
+    const freeTierChecks = checks.filter((c) => c.id.startsWith("free_tier_"));
+    expect(freeTierChecks).toHaveLength(0);
+    // Config should NOT have been saved (no drift detected)
+    expect(savedConfigs).toHaveLength(0);
+  });
+
+  it("does not include free_tier_ check for wasFree:false model", async () => {
+    models = [{ id: "paid/model", label: "Paid Model", wasFree: false }];
+    syncedFlag = true;
+
+    stubCatalogFetch([
+      { id: "paid/model", name: "Paid Model", context_length: 8000, pricing: { prompt: "0.0000015", completion: "0.000006" } },
+    ]);
+
+    const { body } = await getJson("/dashboard/api/health");
+    const checks = body.checks as { id: string; ok: boolean }[];
+    const freeTierChecks = checks.filter((c) => c.id.startsWith("free_tier_"));
+    expect(freeTierChecks).toHaveLength(0);
+  });
 });
 
 describe("GET /dashboard/api/logs", () => {

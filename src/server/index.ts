@@ -153,6 +153,28 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
     }
   }
 
+  if (route.entry.priceDrift) {
+    const { promptPrice, completionPrice } = route.entry.priceDrift;
+    log(`ucretsiz->ucretli gecisi: ${route.entry.id} engellendi`);
+    sendJson(res, 402, {
+      type: "error",
+      error: {
+        type: "billing_error",
+        message: `cor: '${route.entry.id}' modeli ucretsizdi, artik ucretli gorunuyor ` +
+          `($${promptPrice ?? "?"}/M girdi, $${completionPrice ?? "?"}/M cikti). Promosyon ` +
+          `bitmis olabilir. Kullanmaya devam etmek icin dashboard'dan modeli guncelle ` +
+          `(priceDrift'i temizle) veya kaldir.`,
+      },
+    });
+    recordRequest({
+      model: route.entry.id,
+      outcome: "price_drift_blocked",
+      durationSeconds: 0,
+      error: "cor: ucretsizden ucretliye gecti",
+    });
+    return;
+  }
+
   log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
   const startedAt = Date.now();
   // The proxy only learns why a request failed once it's already been answered,

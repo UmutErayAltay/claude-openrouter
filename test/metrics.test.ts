@@ -33,11 +33,27 @@ describe("renderMetrics", () => {
   });
 
   it("tracks every RequestOutcome value distinctly", () => {
-    for (const outcome of ["ok", "upstream_error", "network_error", "no_key", "stream_error"] as const) {
+    for (const outcome of [
+      "ok",
+      "upstream_error",
+      "network_error",
+      "no_key",
+      "stream_error",
+      "budget_blocked",
+      "price_drift_blocked",
+    ] as const) {
       recordRequest({ model: "x", outcome, durationSeconds: 1 });
     }
     const text = renderMetrics();
-    for (const outcome of ["ok", "upstream_error", "network_error", "no_key", "stream_error"]) {
+    for (const outcome of [
+      "ok",
+      "upstream_error",
+      "network_error",
+      "no_key",
+      "stream_error",
+      "budget_blocked",
+      "price_drift_blocked",
+    ]) {
       expect(text).toContain(`cor_requests_total{model="x",outcome="${outcome}"} 1`);
     }
   });
@@ -130,6 +146,7 @@ describe("getMetricsSummary", () => {
       no_key: 1,
       stream_error: 0,
       budget_blocked: 0,
+      price_drift_blocked: 0,
     });
     expect(summary.models[0]?.total).toBe(5);
     expect(summary.totals).toMatchObject({ ok: 3, errors: 2, total: 5, successRate: 0.6 });
@@ -289,6 +306,20 @@ describe("recentErrors", () => {
     expect(summary.recentErrors).toHaveLength(1);
     expect(summary.recentErrors[0]?.outcome).toBe("budget_blocked");
     expect(summary.recentErrors[0]?.error).toBe("cor: butce asildi");
+  });
+
+  it("counts a price_drift_blocked request as a failure, message included", () => {
+    recordRequest({
+      model: "x",
+      outcome: "price_drift_blocked",
+      durationSeconds: 0,
+      error: "cor: ucretsizden ucretliye gecti",
+    });
+
+    const summary = getMetricsSummary();
+    expect(summary.recentErrors).toHaveLength(1);
+    expect(summary.recentErrors[0]?.outcome).toBe("price_drift_blocked");
+    expect(summary.recentErrors[0]?.error).toBe("cor: ucretsizden ucretliye gecti");
   });
 
   it("is empty when everything succeeded", () => {

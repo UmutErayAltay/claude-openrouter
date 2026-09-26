@@ -100,6 +100,10 @@ export interface ModelEntry {
    * non-streaming instead of it looking identical to a manual `--no-stream`.
    */
   autoRecovered?: boolean;
+  /** True when the model was added while catalog price was 0/0 (free tier). */
+  wasFree?: boolean;
+  /** Price drift detection: if present, model is blocked (promotion ended). */
+  priceDrift?: { detectedAt: number; promptPrice: number | null; completionPrice: number | null };
 }
 
 /** Spend caps, in dollars. `action` decides whether hitting one warns or blocks. */

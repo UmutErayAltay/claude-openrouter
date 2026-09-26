@@ -595,6 +595,73 @@ describe("GET /metrics", () => {
   });
 });
 
+describe("price drift blocking (price_drift_blocked)", () => {
+  it("blocks a model with priceDrift set and returns 402 billing_error", async () => {
+    resetMetrics();
+    // Override config to have a model with priceDrift
+    const driftConfig = () => ({
+      ...DEFAULT_CONFIG,
+      openrouterApiKey: "sk-or-test",
+      openrouterBaseUrl: `${upstreamUrl}/api/v1`,
+      anthropicBaseUrl: upstreamUrl,
+      models: [
+        {
+          id: "openai/gpt-5",
+          label: "GPT-5",
+          maxOutputTokens: 8192,
+          priceDrift: { detectedAt: Date.now(), promptPrice: 1.5, completionPrice: 6 },
+        },
+      ],
+    });
+
+    const proxyWithDrift = createProxyServer({
+      loadConfig: driftConfig,
+      markNonStreaming: (modelId) => {
+        marked.push(modelId);
+        return true;
+      },
+      recordUsage: (entry) => {
+        recordedUsage.push(entry);
+      },
+    });
+    await new Promise<void>((resolve) => proxyWithDrift.listen(0, "127.0.0.1", resolve));
+    const driftProxyUrl = `http://127.0.0.1:${(proxyWithDrift.address() as AddressInfo).port}`;
+
+    // This should NOT call upstream at all
+    respond = jsonUpstream({ choices: [{ message: { content: "should not be called" } }] });
+    captured = [];
+
+    const response = await fetch(`${driftProxyUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "openai/gpt-5",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "selam" }],
+      }),
+    });
+
+    const body = await response.json();
+    expect(response.status).toBe(402);
+    expect(body).toMatchObject({
+      type: "error",
+      error: {
+        type: "billing_error",
+        message: expect.stringContaining("ucretsizdi, artik ucretli gorunuyor"),
+      },
+    });
+
+    // Upstream should NOT have been called
+    expect(captured).toHaveLength(0);
+
+    // Metrics should record price_drift_blocked
+    const metricsText = await (await fetch(`${driftProxyUrl}/metrics`)).text();
+    expect(metricsText).toContain('cor_requests_total{model="openai/gpt-5",outcome="price_drift_blocked"} 1');
+
+    await new Promise<void>((resolve) => proxyWithDrift.close(() => resolve()));
+  });
+});
+
 describe("estimateInputTokens", () => {
   it("counts the system prompt, messages and tools", () => {
     const estimate = estimateInputTokens({

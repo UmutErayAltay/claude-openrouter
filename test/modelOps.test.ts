@@ -1,17 +1,23 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_CONFIG, type Config } from "../src/config.js";
 import {
   ModelOpError,
   addModel,
   autofillFromCatalog,
   buildModelEntry,
+  checkFreeTierDrift,
   mergeModelEntry,
   removeModel,
+  type FreeTierDrift,
   updateModel,
   validateModelEntry,
 } from "../src/modelOps.js";
+import type { CatalogModel } from "../src/openrouterCatalog.js";
 
 function config(models: Config["models"] = [], overrides: Partial<Config> = {}): Config {
   return { ...DEFAULT_CONFIG, models, ...overrides };
@@ -348,5 +354,227 @@ describe("removeModel", () => {
     const cfg = config([{ id: "a" }]);
     expect(removeModel(cfg, "missing")).toBe(false);
     expect(cfg.models).toEqual([{ id: "a" }]);
+  });
+});
+
+describe("autofillFromCatalog wasFree behavior", () => {
+  it("sets wasFree=true when catalog has promptPrice=0 and completionPrice=0", async () => {
+    const freeCatalog = createServer((req, res) => {
+      if (req.url === "/models") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "free/model",
+                name: "Free Model",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                pricing: { prompt: "0", completion: "0" },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => freeCatalog.listen(0, "127.0.0.1", resolve));
+    const freeUrl = `http://127.0.0.1:${(freeCatalog.address() as AddressInfo).port}`;
+
+    const cfg = config([], { openrouterBaseUrl: freeUrl });
+    const result = await autofillFromCatalog(cfg, { id: "free/model" });
+
+    expect(result.status).toBe("filled");
+    expect(result.entry.wasFree).toBe(true);
+    await new Promise<void>((resolve) => freeCatalog.close(() => resolve()));
+  });
+
+  it("sets wasFree=false when catalog has promptPrice>0", async () => {
+    const paidCatalog = createServer((req, res) => {
+      if (req.url === "/models") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "paid/model",
+                name: "Paid Model",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                pricing: { prompt: "0.000001", completion: "0.000002" },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => paidCatalog.listen(0, "127.0.0.1", resolve));
+    const paidUrl = `http://127.0.0.1:${(paidCatalog.address() as AddressInfo).port}`;
+
+    const cfg = config([], { openrouterBaseUrl: paidUrl });
+    const result = await autofillFromCatalog(cfg, { id: "paid/model" });
+
+    expect(result.status).toBe("filled");
+    expect(result.entry.wasFree).toBe(false);
+    await new Promise<void>((resolve) => paidCatalog.close(() => resolve()));
+  });
+});
+
+describe("checkFreeTierDrift", () => {
+  let catalogServer: Server;
+  let catalogUrl: string;
+
+  beforeAll(async () => {
+    catalogServer = createServer((req, res) => {
+      if (req.url === "/models") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "free/model",
+                name: "Free Model",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                pricing: { prompt: "0.000001", completion: "0.000002" }, // became paid
+              },
+              {
+                id: "still-free/model",
+                name: "Still Free",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                pricing: { prompt: "0", completion: "0" }, // still free
+              },
+              {
+                id: "unknown-price/model",
+                name: "Unknown Price",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                // no pricing field = unknown
+              },
+              {
+                id: "was-paid/model",
+                name: "Was Paid",
+                context_length: 8000,
+                top_provider: { max_completion_tokens: 4000 },
+                pricing: { prompt: "0.000001", completion: "0.000002" },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => catalogServer.listen(0, "127.0.0.1", resolve));
+    catalogUrl = `http://127.0.0.1:${(catalogServer.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => catalogServer.close(() => resolve()));
+  });
+
+  it("detects drift for wasFree:true model with no priceDrift when catalog shows paid", async () => {
+    const cfg = config(
+      [
+        { id: "free/model", wasFree: true },
+        { id: "still-free/model", wasFree: true },
+      ],
+      { openrouterBaseUrl: catalogUrl },
+    );
+
+    const catalog = await (await import("../src/openrouterCatalog.js")).fetchCatalog(cfg);
+    const driftResult = checkFreeTierDrift(cfg, catalog);
+
+    // Only free/model should be detected (became paid), still-free/model still free
+    expect(driftResult).toHaveLength(1);
+    expect(driftResult[0]?.id).toBe("free/model");
+    expect(driftResult[0]?.promptPrice).toBeGreaterThan(0);
+    expect(driftResult[0]?.completionPrice).toBeGreaterThan(0);
+    expect(cfg.models.find((m) => m.id === "free/model")?.priceDrift).toBeDefined();
+  });
+
+  it("returns empty array on second call for same model (priceDrift already set)", async () => {
+    const cfg = config(
+      [
+        { id: "free/model", wasFree: true },
+      ],
+      { openrouterBaseUrl: catalogUrl },
+    );
+
+    const catalog = await (await import("../src/openrouterCatalog.js")).fetchCatalog(cfg);
+    checkFreeTierDrift(cfg, catalog);
+    const secondCall = checkFreeTierDrift(cfg, catalog);
+
+    expect(secondCall).toEqual([]);
+  });
+
+  it("does not touch wasFree:false model", async () => {
+    const cfg = config(
+      [
+        { id: "was-paid/model", wasFree: false },
+      ],
+      { openrouterBaseUrl: catalogUrl },
+    );
+
+    const catalog = await (await import("../src/openrouterCatalog.js")).fetchCatalog(cfg);
+    const drift = checkFreeTierDrift(cfg, catalog);
+
+    expect(drift).toEqual([]);
+    expect(cfg.models.find((m) => m.id === "was-paid/model")?.priceDrift).toBeUndefined();
+  });
+
+  it("does not touch model with wasFree:true but catalog still shows free", async () => {
+    const cfg = config(
+      [
+        { id: "still-free/model", wasFree: true },
+      ],
+      { openrouterBaseUrl: catalogUrl },
+    );
+
+    const catalog = await (await import("../src/openrouterCatalog.js")).fetchCatalog(cfg);
+    const drift = checkFreeTierDrift(cfg, catalog);
+
+    expect(drift).toEqual([]);
+    expect(cfg.models.find((m) => m.id === "still-free/model")?.priceDrift).toBeUndefined();
+  });
+
+  it("does not touch model with wasFree:true but catalog has unknown price (null)", async () => {
+    const cfg = config(
+      [
+        { id: "unknown-price/model", wasFree: true },
+      ],
+      { openrouterBaseUrl: catalogUrl },
+    );
+
+    const catalog = await (await import("../src/openrouterCatalog.js")).fetchCatalog(cfg);
+    const drift = checkFreeTierDrift(cfg, catalog);
+
+    expect(drift).toEqual([]);
+    expect(cfg.models.find((m) => m.id === "unknown-price/model")?.priceDrift).toBeUndefined();
+  });
+});
+
+describe("mergeModelEntry with priceDrift and wasFree", () => {
+  const base = {
+    id: "x",
+    label: "X",
+    wasFree: true,
+    priceDrift: { detectedAt: 123, promptPrice: 1, completionPrice: 2 },
+  };
+
+  it("clears priceDrift when patch has priceDrift: null", () => {
+    const merged = mergeModelEntry(base, { priceDrift: null } as any);
+    expect(merged.priceDrift).toBeUndefined();
+    expect(merged.wasFree).toBe(true);
+  });
+
+  it("clears wasFree when patch has wasFree: null", () => {
+    const merged = mergeModelEntry(base, { wasFree: null } as any);
+    expect(merged.wasFree).toBeUndefined();
+    expect(merged.priceDrift).toBeDefined();
   });
 });

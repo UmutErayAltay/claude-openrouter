@@ -9,7 +9,7 @@ import {
   type ProviderSort,
   type ReasoningEffort,
 } from "./config.js";
-import { fetchCatalog, shortDescription } from "./openrouterCatalog.js";
+import { fetchCatalog, shortDescription, type CatalogModel } from "./openrouterCatalog.js";
 
 export class ModelOpError extends Error {}
 
@@ -29,6 +29,8 @@ export interface ModelInput {
   providerSort?: string | null;
   maxPrice?: { prompt?: number; completion?: number } | null;
   quantizations?: string[] | null;
+  wasFree?: boolean | null;
+  priceDrift?: null;
 }
 
 function validateReasoning(value: string | null | undefined): ReasoningEffort | undefined {
@@ -213,6 +215,10 @@ export function mergeModelEntry(existing: ModelEntry, patch: ModelInput): ModelE
     if (providerSort) merged.providerSort = providerSort;
   }
 
+  if (patch.wasFree === null) delete merged.wasFree;
+  else if (patch.wasFree !== undefined) merged.wasFree = patch.wasFree;
+  if (patch.priceDrift === null) delete merged.priceDrift;
+
   return merged;
 }
 
@@ -240,6 +246,12 @@ export async function autofillFromCatalog(config: Config, entry: ModelEntry): Pr
     filled.description ??= shortDescription(match.description);
     filled.contextTokens ??= match.contextLength;
     filled.maxOutputTokens ??= match.maxCompletionTokens;
+    // Set only when the catalog actually reports a price on both sides: an
+    // entry with no pricing data at all leaves wasFree unset (unknown), while
+    // a real positive price sets wasFree explicitly to false (known, not free).
+    if (match.promptPrice !== undefined && match.completionPrice !== undefined) {
+      filled.wasFree ??= match.promptPrice === 0 && match.completionPrice === 0;
+    }
     return { entry: filled, status: "filled" };
   } catch (err) {
     return { entry, status: "catalog_error", errorMessage: (err as Error).message };
@@ -280,4 +292,33 @@ export function removeModel(config: Config, id: string): boolean {
   const before = config.models.length;
   config.models = config.models.filter((model) => model.id !== id);
   return config.models.length !== before;
+}
+
+export interface FreeTierDrift {
+  id: string;
+  promptPrice: number;
+  completionPrice: number;
+}
+
+export function checkFreeTierDrift(config: Config, catalog: CatalogModel[]): FreeTierDrift[] {
+  const detected: FreeTierDrift[] = [];
+  for (const model of config.models) {
+    if (model.wasFree && !model.priceDrift) {
+      const match = catalog.find((m) => m.id === model.id);
+      if (match) {
+        const promptPrice = match.promptPrice ?? null;
+        const completionPrice = match.completionPrice ?? null;
+        // Only detect drift if there's a real positive price (not null/undefined)
+        if ((promptPrice !== null && promptPrice > 0) || (completionPrice !== null && completionPrice > 0)) {
+          model.priceDrift = {
+            detectedAt: Date.now(),
+            promptPrice,
+            completionPrice,
+          };
+          detected.push({ id: model.id, promptPrice: promptPrice ?? 0, completionPrice: completionPrice ?? 0 });
+        }
+      }
+    }
+  }
+  return detected;
 }

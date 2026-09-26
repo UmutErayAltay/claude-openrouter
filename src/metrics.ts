@@ -11,7 +11,8 @@ export type RequestOutcome =
   | "network_error"
   | "no_key"
   | "stream_error"
-  | "budget_blocked";
+  | "budget_blocked"
+  | "price_drift_blocked";
 
 /** Keyed by outcome so adding one to RequestOutcome without listing it here is a type error. */
 const OUTCOMES: Record<RequestOutcome, true> = {
@@ -21,6 +22,7 @@ const OUTCOMES: Record<RequestOutcome, true> = {
   no_key: true,
   stream_error: true,
   budget_blocked: true,
+  price_drift_blocked: true,
 };
 
 /** One request, kept in memory so the dashboard can show what just went wrong. */
