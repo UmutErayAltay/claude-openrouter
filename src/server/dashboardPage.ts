@@ -117,6 +117,7 @@ export function buildDashboardHtml(): string {
       <h2>Ekli modeller</h2>
       <div class="actions">
         <button id="newModelBtn" class="btn" type="button">+ Yeni model</button>
+        <button id="historyBtn" class="btn btn-secondary" type="button">Gecmis</button>
         <span class="badge" id="syncStatusBadge">-</span>
         <button id="syncBtn" class="btn" type="button">Menuye yaz</button>
         <button id="revertBtn" class="btn btn-secondary" type="button">Son sync'i geri al</button>
@@ -133,10 +134,50 @@ export function buildDashboardHtml(): string {
       <tbody id="modelsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
     </table>
     </div>
+    <div class="sub-panel hidden" id="historyPanel">
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Zaman</th><th class="mono">Model sayisi</th><th class="mono">Boyut</th><th></th></tr></thead>
+        <tbody id="historyBody"><tr class="empty-row"><td colspan="4">Henuz gecmis yok.</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="compareCard">
+    <div class="card-header">
+      <h2>Model karsilastirma</h2>
+      <div class="actions">
+        <button id="compareToggleBtn" class="btn btn-secondary btn-small" type="button" aria-expanded="false">Karsilastir</button>
+      </div>
+    </div>
+    <div class="sub-panel hidden" id="comparePanel">
+      <div class="hint">Ayni soruyu 2-4 modele birden sorar; her biri gercek, ucretli bir istektir.</div>
+      <div id="compareModels" class="compare-models"></div>
+      <label>Prompt
+        <textarea id="comparePrompt" class="prompt-area" rows="3" placeholder="Bos birakilirsa varsayilan test promptu"></textarea>
+      </label>
+      <div class="form-actions">
+        <button id="compareRunBtn" class="btn" type="button">Calistir</button>
+        <span class="hint" id="compareCount">0 secili</span>
+      </div>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Model</th><th class="mono">Gecikme</th><th class="mono">Token (in/out)</th><th class="mono">Maliyet</th><th>Yanit</th></tr></thead>
+        <tbody id="compareBody"><tr class="empty-row"><td colspan="5">Henuz karsilastirma calistirilmadi.</td></tr></tbody>
+      </table>
+      </div>
+    </div>
   </section>
 
   <section class="card hidden" id="modelFormCard">
     <h2 id="modelFormTitle">Model ekle</h2>
+    <div class="preset-row">
+      <span class="preset-label">Hazir ayarlar</span>
+      <button id="presetFreeBtn" class="btn btn-secondary btn-small" type="button">Ucretsiz</button>
+      <button id="presetFastBtn" class="btn btn-secondary btn-small" type="button">Hizli</button>
+      <button id="presetReasoningBtn" class="btn btn-secondary btn-small" type="button">Derin dusunme</button>
+    </div>
     <div class="search-row">
       <input id="catalogSearch" type="text" placeholder="OpenRouter kataloginda ara (ornek: deepseek, gpt-5, qwen)" autocomplete="off">
       <div id="catalogResults" class="catalog-results"></div>
@@ -233,6 +274,63 @@ export function buildDashboardHtml(): string {
       </div>
     </form>
     </div>
+    <div class="hidden" id="agentEditPanel">
+    <form id="agentEditForm" class="agent-edit-form">
+      <label class="span-all">Dosya
+        <input id="aeFile" type="text" readonly>
+      </label>
+      <label class="span-all">Model
+        <select id="aeModel"></select>
+      </label>
+      <label>Tool'lar
+        <input id="aeTools" type="text" placeholder="Read, Write, Bash">
+      </label>
+      <label class="span-two">Aciklama
+        <input id="aeDescription" type="text">
+      </label>
+      <label class="span-all">Sistem promptu
+        <textarea id="aeBody" class="prompt-area" rows="8"></textarea>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn" id="agentEditSave">Kaydet</button>
+        <button type="button" class="btn btn-secondary" id="agentEditCancel">Vazgec</button>
+      </div>
+    </form>
+    </div>
+  </section>
+
+  <section class="card" id="settingsCard">
+    <div class="card-header">
+      <h2>Ayarlar</h2>
+      <div class="actions">
+        <button id="settingsToggleBtn" class="btn btn-small btn-secondary" type="button" aria-expanded="false">Duzenle</button>
+      </div>
+    </div>
+    <div id="settingsSummary" class="settings-summary">yukleniyor...</div>
+    <form id="settingsForm" class="settings-form hidden">
+      <label>Gunluk butce $
+        <input id="sBudgetDaily" type="number" min="0" step="0.01" placeholder="sinirsiz">
+      </label>
+      <label>Aylik butce $
+        <input id="sBudgetMonthly" type="number" min="0" step="0.01" placeholder="sinirsiz">
+      </label>
+      <label>Asilinca
+        <select id="sBudgetAction">
+          <option value="warn">sadece uyar</option>
+          <option value="block">ucretli modelleri engelle</option>
+        </select>
+      </label>
+      <label>Hata orani esigi %
+        <input id="sErrorRate" type="number" min="0" step="0.1" placeholder="kapali">
+      </label>
+      <label>Webhook URL
+        <input id="sWebhook" type="text" placeholder="https://...">
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn" id="settingsSave">Kaydet</button>
+        <button type="button" class="btn btn-secondary" id="settingsCancel">Vazgec</button>
+      </div>
+    </form>
   </section>
 
   <section class="card">

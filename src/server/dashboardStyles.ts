@@ -693,4 +693,125 @@ label {
   white-space: pre-wrap;
 }
 .test-result.error { color: var(--danger); }
+
+/* ---- Yeni kartlar: alt paneller, onayarlar, karsilastirma, ayarlar ---- */
+
+/* Bir kart gövdesi yerine açılan ikincil bölüm: kart kenarindan içeri alinir,
+   üst kenarligi yok, ayirici olarak yalnizca bir bosluk. */
+.sub-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sub-panel > .hint { margin-bottom: 0; }
+
+/* Hazir ayar butonlari: katalog arama kutusunun ustunde tek sira. */
+.preset-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.preset-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Katalog sonucundaki fiyat satiri: id + adin altinda kucuk, ikincil. */
+.catalog-result .cr-price {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.catalog-result .cr-price.free { color: var(--success); }
+
+/* Karsilastirma: model secim listesi tek sutun, yazi degil kontrol agir. */
+.compare-models {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+@media (max-width: 720px) {
+  .compare-models { grid-template-columns: 1fr; }
+}
+.compare-models .compare-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.compare-models .compare-option input { margin: 0; flex-shrink: 0; }
+.compare-models .compare-option span {
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+textarea.prompt-area {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+  min-width: 0;
+}
+textarea.prompt-area:focus { outline: 1px solid var(--accent-dim); outline-offset: 1px; }
+label > .prompt-area { margin-top: 0; }
+
+.sub-panel .form-actions,
+.settings-form .form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.sub-panel .hint { margin: 0; }
+
+/* Ajan duzenleme paneli: iki kolon, sistem promptu ve dosya tam genislik. */
+.agent-edit-form,
+.settings-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+.agent-edit-form .span-all,
+.settings-form .form-actions { grid-column: 1 / -1; }
+.agent-edit-form .span-two { grid-column: span 2; }
+.agent-edit-form .form-actions { grid-column: 1 / -1; }
+@media (max-width: 720px) {
+  .agent-edit-form,
+  .settings-form { grid-template-columns: 1fr; }
+  .agent-edit-form .span-two { grid-column: span 1; }
+}
+.agent-edit-form input[readonly] {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-summary {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.settings-summary:empty { display: none; }
 `;

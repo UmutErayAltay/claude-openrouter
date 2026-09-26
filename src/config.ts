@@ -372,7 +372,14 @@ function snapshotConfig(): void {
   if (!existsSync(path)) return;
   try {
     mkdirSync(historyDir(), { recursive: true, mode: 0o700 });
-    const target = join(historyDir(), historyFileName(Date.now()));
+    // Two saves in the same millisecond (a dashboard edit right after a
+    // restore) must not overwrite each other's snapshot.
+    const base = historyFileName(Date.now());
+    let target = join(historyDir(), base);
+    for (let n = 1; existsSync(target); n++) {
+      // "_n" sorts after ".json" byte-wise, so the later save still lists newest.
+      target = join(historyDir(), base.replace(/\.json$/, `_${n}.json`));
+    }
     writeFileSync(target, readFileSync(path, "utf8"), { mode: 0o600 });
     chmodSync(target, 0o600);
 
@@ -405,7 +412,7 @@ export function listConfigHistory(): ConfigHistoryEntry[] {
         {
           file,
           // The filename is the timestamp; show it as a plain ISO instant.
-          savedAt: file.replace(/\.json$/, "").replace("T", " "),
+          savedAt: file.replace(/(_\d+)?\.json$/, "").replace("T", " "),
           models,
           size: statSync(path).size,
         },

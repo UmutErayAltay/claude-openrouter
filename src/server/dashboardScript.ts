@@ -960,25 +960,74 @@ export const DASHBOARD_JS = `
     budget_blocked: "butce",
   };
 
+  // metrics-recent ve usage iki ayrı dosyadan gelir; ayni istegin iki kaydi
+  // arasindaki zaman farki kucuksa (dosya yazma sirasi farkli olabilir)
+  // birebir esitlik bulmaz. Ayni model icinde en yakin kaydi seceriz ve bir
+  // kaydi iki satira birden baglamayiz.
+  var COST_MATCH_WINDOW_MS = 3000;
+
+  function matchUsageCosts(recent) {
+    var usageRecent = ((lastUsage && lastUsage.recent) || []).slice();
+    var used = {};
+    var costByIndex = [];
+    recent.forEach(function (r) {
+      costByIndex.push(null);
+      var bestIndex = -1;
+      var bestDelta = Infinity;
+      for (var i = 0; i < usageRecent.length; i++) {
+        if (used[i]) continue;
+        if (usageRecent[i].model !== r.model) continue;
+        var delta = Math.abs(usageRecent[i].ts - r.ts);
+        if (delta <= COST_MATCH_WINDOW_MS && delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = i;
+        }
+      }
+      if (bestIndex === -1) return;
+      used[bestIndex] = true;
+      costByIndex[costByIndex.length - 1] = usageRecent[bestIndex].cost;
+    });
+    return costByIndex;
+  }
+
   function renderRecentRows() {
     var tbody = qs("recentBody");
     if (!tbody) return;
     var recent = (lastRecent && lastRecent.recent) || [];
     var filter = qs("recentModelFilter").value;
     var onlyErrors = qs("onlyErrorsToggle").checked;
+    var isProxyEntry = Boolean(lastRecent);
 
-    // Maliyet, aynı isteğin usage kaydıyla eşleşir; eşleşmezse "-".
-    var costByKey = {};
-    var usageRecent = (lastUsage && lastUsage.recent) || [];
-    usageRecent.forEach(function (r) {
-      costByKey[r.ts + "|" + r.model] = r.cost;
-    });
+    // Proxy yeni basladiysa metrics-recent bos kalir; bu durumda tablo
+    // yine dolu gorunur. Bu satirlar istek sonucu bilgisi tasidigi icin
+    // sure bilinmiyorsa "yok" degil "-" yazilir.
+    if (!recent.length && !isProxyEntry) {
+      var fallback = ((lastUsage && lastUsage.recent) || []).filter(function (r) {
+        if (filter && r.model !== filter) return false;
+        // Bu kayitlarda hata sonucu yok; yalnizca hata isteyenin tablosu bos kalir.
+        if (onlyErrors) return false;
+        return true;
+      });
+      setRows("recentBody", fallback.map(function (r) {
+        var tr = document.createElement("tr");
+        tr.appendChild(td(fmtDate(r.ts), "mono"));
+        var modelCell = td(r.model, "mono");
+        modelCell.title = r.model;
+        tr.appendChild(modelCell);
+        tr.appendChild(td("ok", "outcome"));
+        tr.appendChild(td("-", "mono"));
+        tr.appendChild(td(r.cost === null || r.cost === undefined ? "-" : fmtMoney(r.cost), "mono"));
+        return tr;
+      }), 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
+      return;
+    }
 
-    var rows = recent.filter(function (r) {
-      if (filter && r.model !== filter) return false;
-      if (onlyErrors && r.outcome === "ok") return false;
-      return true;
-    }).map(function (r) {
+    // Maliyet eslesmesi butun satirlar icin bir kez hesaplanir, sonra
+    // suzgecenin gectigi satirlara dagitilir.
+    var costs = matchUsageCosts(recent);
+    var rows = recent.map(function (r, index) {
+      if (filter && r.model !== filter) return null;
+      if (onlyErrors && r.outcome === "ok") return null;
       var isError = r.outcome !== "ok";
       var tr = document.createElement("tr");
       if (isError) tr.className = "row-error";
@@ -996,11 +1045,11 @@ export const DASHBOARD_JS = `
 
       tr.appendChild(td(fmtSeconds(r.durationSeconds) || "-", "mono"));
 
-      var cost = costByKey[r.ts + "|" + r.model];
-      tr.appendChild(td(cost === undefined ? "-" : fmtMoney(cost), "mono"));
+      var cost = costs[index];
+      tr.appendChild(td(cost === null || cost === undefined ? "-" : fmtMoney(cost), "mono"));
 
       return tr;
-    });
+    }).filter(Boolean);
 
     setRows("recentBody", rows, 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
   }
@@ -1190,6 +1239,131 @@ export const DASHBOARD_JS = `
     setRows("modelsBody", rows, 5, "Hic model ekli degil.");
     populateAgentModelSelect(models);
     populateRecentModelFilter(models);
+    renderCompareModels(models);
+  }
+
+  var COMPARE_MIN = 2;
+  var COMPARE_MAX = 4;
+
+  function renderCompareModels(models) {
+    var host = qs("compareModels");
+    if (!host) return;
+    var chosen = selectedCompareIds();
+    host.textContent = "";
+    if (!models.length) {
+      var empty = document.createElement("p");
+      empty.className = "bar-empty";
+      empty.textContent = "Once ekli bir model sec.";
+      host.appendChild(empty);
+      return;
+    }
+    models.forEach(function (m) {
+      var option = document.createElement("label");
+      option.className = "compare-option";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = m.id;
+      box.checked = chosen.indexOf(m.id) !== -1;
+      box.addEventListener("change", function () {
+        var ids = selectedCompareIds();
+        if (ids.length > COMPARE_MAX) {
+          box.checked = false;
+          toast("En fazla " + COMPARE_MAX + " model karsilastirilir.", "error");
+        }
+        updateCompareCount();
+      });
+      var label = document.createElement("span");
+      label.textContent = m.label ? m.label + " (" + m.id + ")" : m.id;
+      label.title = m.id;
+      option.appendChild(box);
+      option.appendChild(label);
+      host.appendChild(option);
+    });
+    updateCompareCount();
+  }
+
+  function selectedCompareIds() {
+    var ids = [];
+    var boxes = document.querySelectorAll("#compareModels input");
+    Array.prototype.forEach.call(boxes, function (box) {
+      if (box.checked) ids.push(box.value);
+    });
+    return ids;
+  }
+
+  function updateCompareCount() {
+    var count = qs("compareCount");
+    if (count) count.textContent = selectedCompareIds().length + " / " + COMPARE_MAX + " secili";
+  }
+
+  function renderCompareResults(results) {
+    var rows = (results || []).map(function (entry) {
+      var result = entry.result || {};
+      var tr = document.createElement("tr");
+      if (!result.ok) tr.className = "row-error";
+
+      var modelCell = td(entry.model, "mono");
+      modelCell.title = entry.model;
+      tr.appendChild(modelCell);
+
+      if (!result.ok) {
+        tr.appendChild(td("-", "mono"));
+        tr.appendChild(td("-", "mono"));
+        tr.appendChild(td("-", "mono"));
+        var errorCell = td(result.error || "bilinmeyen hata", "compare-answer");
+        errorCell.title = result.error || "";
+        tr.appendChild(errorCell);
+        return tr;
+      }
+
+      tr.appendChild(td(fmtNum(result.latencyMs) + "ms", "mono"));
+      tr.appendChild(td(fmtNum(result.promptTokens) + " / " + fmtNum(result.completionTokens), "mono"));
+      tr.appendChild(td(result.cost === null || result.cost === undefined ? "-" : fmtMoney(result.cost), "mono"));
+      var answer = result.text || "";
+      var preview = answer.length > 120 ? answer.slice(0, 120) + "..." : answer;
+      var answerCell = td(preview || "-", "compare-answer");
+      answerCell.title = answer;
+      tr.appendChild(answerCell);
+      return tr;
+    });
+    setRows("compareBody", rows, 5, "Sonuc yok.");
+  }
+
+  function wireCompare() {
+    var toggle = qs("compareToggleBtn");
+    toggle.addEventListener("click", function () {
+      var panel = qs("comparePanel");
+      var hidden = panel.classList.toggle("hidden");
+      toggle.textContent = hidden ? "Karsilastir" : "Kapat";
+      toggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    });
+
+    qs("compareRunBtn").addEventListener("click", function () {
+      var ids = selectedCompareIds();
+      if (ids.length < COMPARE_MIN) {
+        toast("En az " + COMPARE_MIN + " model sec.", "error");
+        return;
+      }
+      if (ids.length > COMPARE_MAX) {
+        toast("En fazla " + COMPARE_MAX + " model karsilastirilir.", "error");
+        return;
+      }
+      var button = qs("compareRunBtn");
+      // Her model gercek bir istek attigi icin cagiri uzun surebilir; dugme
+      // boyle birakilirsa ikinci bir cagri kullaniciyi ikiye katlar.
+      button.disabled = true;
+      var label = button.textContent;
+      button.textContent = "Karsilastiriliyor...";
+      setRows("compareBody", [], 5, "Karsilastiriliyor...");
+      post("/dashboard/api/models/compare", { ids: ids, prompt: qs("comparePrompt").value })
+        .then(function (data) { renderCompareResults(data.results || []); })
+        .catch(function (err) { toast(err.message, "error"); })
+        .then(function () {
+          button.disabled = false;
+          button.textContent = label;
+          refreshUsage();
+        });
+    });
   }
 
   function runModelTest(id, button, resultBox) {
@@ -1343,34 +1517,8 @@ export const DASHBOARD_JS = `
       var actionsWrap = document.createElement("div");
       actionsWrap.className = "row-actions";
 
-      var reassignSelect = document.createElement("select");
-      currentModels.forEach(function (m) {
-        var option = document.createElement("option");
-        option.value = m.id;
-        option.textContent = m.label ? m.label + " (" + m.id + ")" : m.id;
-        reassignSelect.appendChild(option);
-      });
-      if (agent.model && currentModels.some(function (m) { return m.id === agent.model; })) {
-        reassignSelect.value = agent.model;
-      }
-
-      var saveBtn = document.createElement("button");
-      saveBtn.type = "button";
-      saveBtn.className = "btn btn-secondary btn-small";
-      saveBtn.textContent = "Modeli degistir";
-      saveBtn.addEventListener("click", function () {
-        var modelId = reassignSelect.value;
-        if (!modelId) return;
-        saveBtn.disabled = true;
-        post("/dashboard/api/agents/create", { name: agent.name, modelId: modelId, scope: agent.scope })
-          .then(function () {
-            toast("Ajan guncellendi: " + agent.name, "success");
-            return refreshAgents();
-          })
-          .catch(function (err) { toast(err.message, "error"); })
-          .then(function () { saveBtn.disabled = false; });
-      });
-
+      // Model degisikligi artik duzenleme panelinden yapilir; satirda yalnizca
+      // iki eylem kalir ki genis tablo tek satira sigsin.
       var delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "btn btn-danger btn-small";
@@ -1385,8 +1533,13 @@ export const DASHBOARD_JS = `
           .catch(function (err) { toast(err.message, "error"); });
       });
 
-      actionsWrap.appendChild(reassignSelect);
-      actionsWrap.appendChild(saveBtn);
+      var editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "btn btn-secondary btn-small";
+      editBtn.textContent = "Duzenle";
+      editBtn.addEventListener("click", function () { openAgentEdit(agent.file); });
+
+      actionsWrap.appendChild(editBtn);
       actionsWrap.appendChild(delBtn);
       actionsCell.appendChild(actionsWrap);
       tr.appendChild(actionsCell);
@@ -1587,6 +1740,161 @@ export const DASHBOARD_JS = `
     });
   }
 
+  // ---- Config gecmisi ----
+
+  function fmtBytes(n) {
+    if (!n) return "0 B";
+    if (n < 1024) return n + " B";
+    return (n / 1024).toFixed(1) + " KB";
+  }
+
+  // savedAt "YYYY-MM-DD HH-MM-SS.mmmZ" bicimindedir (dosya adi); yerel saate cevir.
+  function fmtHistoryTime(savedAt) {
+    var m = /^(\\d{4}-\\d{2}-\\d{2}) (\\d{2})-(\\d{2})-(\\d{2})(\\.\\d+)?Z$/.exec(savedAt || "");
+    if (!m) return savedAt || "-";
+    var ts = Date.parse(m[1] + "T" + m[2] + ":" + m[3] + ":" + m[4] + (m[5] || "") + "Z");
+    return isNaN(ts) ? savedAt : fmtDate(ts);
+  }
+
+  function renderConfigHistory(history) {
+    var rows = (history || []).map(function (entry) {
+      var tr = document.createElement("tr");
+      tr.appendChild(td(fmtHistoryTime(entry.savedAt), "mono"));
+      tr.appendChild(td(fmtNum(entry.models), "mono"));
+      tr.appendChild(td(fmtBytes(entry.size), "mono"));
+
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-secondary btn-small";
+      button.textContent = "Geri yukle";
+      button.addEventListener("click", function () {
+        if (!window.confirm("Config gecmisi geri yuklensin mi: " + entry.savedAt +
+          " (" + entry.models + " model)? Simdiki model listesi degisecek.")) return;
+        button.disabled = true;
+        post("/dashboard/api/config/restore", { file: entry.file })
+          .then(function (data) {
+            toast("Gecmis geri yuklendi: " + data.models + " model.", "success");
+            hideConfigHistory();
+            return refreshModelsAndAgents();
+          })
+          .then(function () { return refreshAll(); })
+          .catch(function (err) { toast(err.message, "error"); })
+          .then(function () { button.disabled = false; });
+      });
+
+      var cell = document.createElement("td");
+      cell.appendChild(button);
+      tr.appendChild(cell);
+      return tr;
+    });
+    setRows("historyBody", rows, 4, "Henuz gecmis yok.");
+  }
+
+  function hideConfigHistory() {
+    qs("historyPanel").classList.add("hidden");
+    qs("historyBtn").textContent = "Gecmis";
+    qs("historyBtn").setAttribute("aria-expanded", "false");
+  }
+
+  function wireConfigHistory() {
+    qs("historyBtn").addEventListener("click", function () {
+      var panel = qs("historyPanel");
+      var hidden = panel.classList.toggle("hidden");
+      var button = qs("historyBtn");
+      button.textContent = hidden ? "Gecmis" : "Kapat";
+      button.setAttribute("aria-expanded", hidden ? "false" : "true");
+      if (hidden) return;
+      setRows("historyBody", [], 4, "Yukleniyor...");
+      get("/dashboard/api/config/history")
+        .then(function (data) { renderConfigHistory(data.history || []); })
+        .catch(function (err) { toast(err.message, "error"); });
+    });
+  }
+
+  // ---- Ayarlar (butce + uyari) ----
+
+  function optionalNumber(value) {
+    return value === "" ? undefined : Number(value);
+  }
+
+  function renderSettings(data) {
+    var budget = data.budget || {};
+    var alerts = data.alerts || {};
+
+    var budgetText = "Butce: gunluk " +
+      (budget.dailyUsd === undefined || budget.dailyUsd === null ? "-" : fmtMoney(budget.dailyUsd)) +
+      " / aylik " +
+      (budget.monthlyUsd === undefined || budget.monthlyUsd === null ? "-" : fmtMoney(budget.monthlyUsd)) +
+      " (" + (budget.action === "block" ? "engelle" : "uyar") + ")";
+    var alertText = "Uyari: hata >%" +
+      (alerts.errorRatePct === undefined || alerts.errorRatePct === null ? "-" : alerts.errorRatePct) +
+      ", webhook " + (alerts.webhookUrl ? "var" : "yok");
+    qs("settingsSummary").textContent = budgetText + " | " + alertText;
+
+    // Kaydet dugmesi kapaliyken de alanlar guncel kalsin ki formu acan
+    // kisi eski degeri degil, kayitli olani gorsun.
+    qs("sBudgetDaily").value = budget.dailyUsd === undefined || budget.dailyUsd === null ? "" : budget.dailyUsd;
+    qs("sBudgetMonthly").value = budget.monthlyUsd === undefined || budget.monthlyUsd === null ? "" : budget.monthlyUsd;
+    qs("sBudgetAction").value = budget.action === "block" ? "block" : "warn";
+    qs("sErrorRate").value = alerts.errorRatePct === undefined || alerts.errorRatePct === null ? "" : alerts.errorRatePct;
+    qs("sWebhook").value = alerts.webhookUrl || "";
+  }
+
+  function refreshSettings() {
+    return get("/dashboard/api/settings")
+      .then(renderSettings)
+      .catch(function () {});
+  }
+
+  function hideSettingsForm() {
+    qs("settingsForm").classList.add("hidden");
+    qs("settingsToggleBtn").textContent = "Duzenle";
+    qs("settingsToggleBtn").setAttribute("aria-expanded", "false");
+  }
+
+  function wireSettings() {
+    var toggle = qs("settingsToggleBtn");
+    toggle.addEventListener("click", function () {
+      var form = qs("settingsForm");
+      var hidden = form.classList.toggle("hidden");
+      toggle.textContent = hidden ? "Duzenle" : "Kapat";
+      toggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    });
+
+    qs("settingsCancel").addEventListener("click", function () {
+      hideSettingsForm();
+      // Vazgec degeri degistirmez: kayitli hali geri cagrilir.
+      refreshSettings();
+    });
+
+    qs("settingsForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var button = qs("settingsSave");
+      button.disabled = true;
+      var errorRate = optionalNumber(qs("sErrorRate").value);
+      // Bos alan "alan yok" demek: sunucu o bolumu dokunmadan birakir.
+      post("/dashboard/api/settings", {
+        budget: {
+          dailyUsd: optionalNumber(qs("sBudgetDaily").value),
+          monthlyUsd: optionalNumber(qs("sBudgetMonthly").value),
+          action: qs("sBudgetAction").value,
+        },
+        alerts: {
+          errorRatePct: errorRate,
+          webhookUrl: qs("sWebhook").value.trim(),
+        },
+      })
+        .then(function (data) {
+          renderSettings(data);
+          hideSettingsForm();
+          toast("Ayarlar kaydedildi.", "success");
+          refreshBanner();
+        })
+        .catch(function (err) { toast(err.message, "error"); })
+        .then(function () { button.disabled = false; });
+    });
+  }
+
   function wireEscapeToCloseForms() {
     document.addEventListener("keydown", function (event) {
       if (event.key !== "Escape") return;
@@ -1596,48 +1904,84 @@ export const DASHBOARD_JS = `
         return;
       }
       if (!qs("agentFormPanel").classList.contains("hidden")) hideAgentForm();
+      if (!qs("agentEditPanel").classList.contains("hidden")) hideAgentEdit();
+      if (!qs("comparePanel").classList.contains("hidden")) {
+        qs("comparePanel").classList.add("hidden");
+        qs("compareToggleBtn").textContent = "Karsilastir";
+        qs("compareToggleBtn").setAttribute("aria-expanded", "false");
+      }
+      if (!qs("historyPanel").classList.contains("hidden")) hideConfigHistory();
+      if (!qs("settingsForm").classList.contains("hidden")) {
+        hideSettingsForm();
+        refreshSettings();
+      }
     });
+  }
+
+  // Katalog fiyatlari milyon token basina dolar; ucretsizler 0.
+  function fmtCatalogPrice(n) {
+    if (n === null || n === undefined) return "-";
+    if (!n) return "0";
+    return n < 1 ? n.toFixed(3) : n.toFixed(2);
+  }
+
+  function renderCatalogResults(results) {
+    var box = qs("catalogResults");
+    box.textContent = "";
+    if (!results.length) {
+      box.classList.remove("open");
+      return;
+    }
+    results.slice(0, 15).forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "catalog-result";
+      var idLine = document.createElement("div");
+      idLine.className = "cr-id";
+      idLine.textContent = item.id;
+      var nameLine = document.createElement("div");
+      nameLine.className = "cr-name";
+      nameLine.textContent = item.name || "";
+      // Fiyat her sonucta gorunur; ucretsiz olan yesil isaretlenir.
+      var priceIn = item.promptPrice;
+      var priceOut = item.completionPrice;
+      if (priceIn !== undefined || priceOut !== undefined) {
+        var isFree = !priceIn && !priceOut;
+        var priceLine = document.createElement("div");
+        priceLine.className = "cr-price" + (isFree ? " free" : "");
+        priceLine.textContent = isFree
+          ? "$0 / $0 ucretsiz"
+          : "$" + fmtCatalogPrice(priceIn) + " / $" + fmtCatalogPrice(priceOut) + " /M";
+        if (!isFree) {
+          priceLine.title = "Girdi $/" + fmtCatalogPrice(priceIn) +
+            "M, cikti $/" + fmtCatalogPrice(priceOut) + "M";
+        }
+        row.appendChild(priceLine);
+      }
+      row.appendChild(idLine);
+      row.appendChild(nameLine);
+      row.addEventListener("click", function () {
+        switchToAddMode();
+        qs("fModelId").value = item.id;
+        if (item.name) qs("fLabel").value = item.name;
+        box.classList.remove("open");
+        qs("catalogSearch").value = "";
+        qs("fModelId").focus();
+      });
+      box.appendChild(row);
+    });
+    box.classList.add("open");
+  }
+
+  function runCatalogQuery(query, freeOnly) {
+    var url = "/dashboard/api/catalog?q=" + encodeURIComponent(query);
+    if (freeOnly) url += "&free=1";
+    return get(url)
+      .then(function (data) { renderCatalogResults(data.results || []); })
+      .catch(function (err) { toast(err.message, "error"); });
   }
 
   function wireCatalogSearch() {
     var searchTimer = null;
-
-    function runSearch(query) {
-      get("/dashboard/api/catalog?q=" + encodeURIComponent(query))
-        .then(function (data) { renderCatalogResults(data.results || []); })
-        .catch(function () { qs("catalogResults").classList.remove("open"); });
-    }
-
-    function renderCatalogResults(results) {
-      var box = qs("catalogResults");
-      box.textContent = "";
-      if (!results.length) {
-        box.classList.remove("open");
-        return;
-      }
-      results.slice(0, 15).forEach(function (item) {
-        var row = document.createElement("div");
-        row.className = "catalog-result";
-        var idLine = document.createElement("div");
-        idLine.className = "cr-id";
-        idLine.textContent = item.id;
-        var nameLine = document.createElement("div");
-        nameLine.className = "cr-name";
-        nameLine.textContent = item.name || "";
-        row.appendChild(idLine);
-        row.appendChild(nameLine);
-        row.addEventListener("click", function () {
-          switchToAddMode();
-          qs("fModelId").value = item.id;
-          if (item.name) qs("fLabel").value = item.name;
-          box.classList.remove("open");
-          qs("catalogSearch").value = "";
-          qs("fModelId").focus();
-        });
-        box.appendChild(row);
-      });
-      box.classList.add("open");
-    }
 
     qs("catalogSearch").addEventListener("input", function () {
       var value = qs("catalogSearch").value;
@@ -1646,7 +1990,7 @@ export const DASHBOARD_JS = `
         qs("catalogResults").classList.remove("open");
         return;
       }
-      searchTimer = window.setTimeout(function () { runSearch(value); }, 250);
+      searchTimer = window.setTimeout(function () { runCatalogQuery(value, false); }, 250);
     });
 
     document.addEventListener("click", function (event) {
@@ -1654,6 +1998,27 @@ export const DASHBOARD_JS = `
       if (!box.contains(event.target) && event.target !== qs("catalogSearch")) {
         box.classList.remove("open");
       }
+    });
+  }
+
+  // Hazir ayarlar: katalogu yeniden sorgular ya da formu tek alanda ayarlar.
+  function wireModelPresets() {
+    qs("presetFreeBtn").addEventListener("click", function () {
+      runCatalogQuery(qs("catalogSearch").value, true).then(function () {
+        toast("Katalog yalnizca ucretsiz modellerle listelendi.");
+      });
+    });
+
+    qs("presetFastBtn").addEventListener("click", function () {
+      qs("fReasoning").value = "low";
+      qs("fSort").value = "throughput";
+      toast("Hizli: reasoning low, saglayici sirasi throughput.");
+    });
+
+    qs("presetReasoningBtn").addEventListener("click", function () {
+      qs("fReasoning").value = "high";
+      qs("fSort").value = "latency";
+      toast("Derin dusunme: reasoning high, saglayici sirasi latency.");
     });
   }
 
@@ -1745,6 +2110,10 @@ export const DASHBOARD_JS = `
     qs("agentFormPanel").classList.add("hidden");
   }
 
+  function hideAgentEdit() {
+    qs("agentEditPanel").classList.add("hidden");
+  }
+
   function wireAgentForm() {
     qs("newAgentBtn").addEventListener("click", function () {
       qs("agentFormPanel").classList.remove("hidden");
@@ -1769,17 +2138,86 @@ export const DASHBOARD_JS = `
     });
   }
 
+  // Ajanin ham dosyasi duzenlenir: model, tool'lar, aciklama ve sistem
+  // promptu. Ayni dosyada ayni anda yazan iki sekme olabilir, bu yuzden
+  // sunucudan gelen hali ekrana basariz.
+  function openAgentEdit(file) {
+    get("/dashboard/api/agents/get?file=" + encodeURIComponent(file))
+      .then(function (data) {
+        var agent = data.agent || {};
+        var select = qs("aeModel");
+        select.textContent = "";
+        currentModels.forEach(function (m) {
+          var option = document.createElement("option");
+          option.value = m.id;
+          option.textContent = m.label ? m.label + " (" + m.id + ")" : m.id;
+          select.appendChild(option);
+        });
+        // Ajanin modeli ekli listede yoksa da gosterilir; yoksa sessizce
+        // listedeki ilk modele kayardi.
+        if (agent.model && !currentModels.some(function (m) { return m.id === agent.model; })) {
+          var missing = document.createElement("option");
+          missing.value = agent.model;
+          missing.textContent = agent.model + " (ekli degil)";
+          select.appendChild(missing);
+        }
+        if (agent.model) select.value = agent.model;
+        qs("aeFile").value = agent.file || file;
+        // Frontmatter values arrive as strings; an array is tolerated too.
+        var tools = agent.tools || "";
+        if (Array.isArray(tools)) tools = tools.join(", ");
+        qs("aeTools").value = tools;
+        qs("aeDescription").value = agent.description || "";
+        qs("aeBody").value = agent.body || "";
+        qs("agentEditPanel").classList.remove("hidden");
+        qs("aeTools").focus();
+      })
+      .catch(function (err) { toast(err.message, "error"); });
+  }
+
+  function wireAgentEdit() {
+    qs("agentEditCancel").addEventListener("click", hideAgentEdit);
+
+    qs("agentEditForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var file = qs("aeFile").value.trim();
+      if (!file) return;
+      var button = qs("agentEditSave");
+      button.disabled = true;
+      post("/dashboard/api/agents/update", {
+        file: file,
+        model: qs("aeModel").value,
+        tools: qs("aeTools").value,
+        description: qs("aeDescription").value,
+        body: qs("aeBody").value,
+      })
+        .then(function () {
+          toast("Ajan guncellendi: " + file, "success");
+          hideAgentEdit();
+          return refreshAgents();
+        })
+        .catch(function (err) { toast(err.message, "error"); })
+        .then(function () { button.disabled = false; });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     switchToAddMode();
     wireModelForm();
     wireCatalogSearch();
+    wireModelPresets();
+    wireCompare();
+    wireConfigHistory();
     wireSyncButtons();
     wireAgentForm();
+    wireAgentEdit();
+    wireSettings();
     wireProxyControls();
     wireLogViewer();
     wireRecentFilter();
     wireEscapeToCloseForms();
     refreshAll();
+    refreshSettings();
     window.setInterval(function () {
       if (!document.hidden) refreshAll();
     }, 25000);
