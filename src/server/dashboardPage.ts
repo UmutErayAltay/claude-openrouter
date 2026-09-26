@@ -34,6 +34,13 @@ export function buildDashboardHtml(): string {
 </header>
 
 <main>
+  <div class="stat-grid" id="statGrid">
+    <div class="stat"><div class="label">Bugun harcama</div><div class="value na">-</div></div>
+    <div class="stat"><div class="label">Bugun istek</div><div class="value na">-</div></div>
+    <div class="stat"><div class="label">Basari orani</div><div class="value na">-</div></div>
+    <div class="stat"><div class="label">Ekli model</div><div class="value">-</div></div>
+  </div>
+
   <section class="card" id="healthCard">
     <h2>Saglik durumu</h2>
     <ul class="health-list" id="healthList"><li class="empty-row">yukleniyor...</li></ul>
@@ -45,19 +52,30 @@ export function buildDashboardHtml(): string {
     <div class="credit-sub" id="creditProjection"></div>
   </section>
 
+  <section class="card" id="resultsCard">
+    <div class="card-header">
+      <h2>Istek sonuclari</h2>
+      <div class="legend" id="resultsLegend"></div>
+    </div>
+    <div class="chart-wrap">
+      <div id="resultsList" class="bar-list"><p class="bar-empty">Henuz veri yok</p></div>
+      <div class="chart-tip" id="resultsTip"></div>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Gunluk harcama (son 14 gun)</h2>
-    <div id="dailyChart" class="chart"></div>
+    <div class="chart-wrap">
+      <div id="dailyChart"></div>
+      <div class="chart-tip" id="dailyTip"></div>
+    </div>
     <div class="totals" id="usageTotals"></div>
   </section>
 
   <div class="grid-2">
     <section class="card">
       <h2>Model bazinda harcama</h2>
-      <table>
-        <thead><tr><th>Model</th><th>Istek</th><th class="mono">Maliyet</th></tr></thead>
-        <tbody id="byModelBody"><tr class="empty-row"><td colspan="3">yukleniyor...</td></tr></tbody>
-      </table>
+      <div class="bar-list" id="byModelBody"><p class="bar-empty">Henuz kayit yok.</p></div>
     </section>
     <section class="card">
       <div class="card-header">
@@ -66,10 +84,12 @@ export function buildDashboardHtml(): string {
           <option value="">Tum modeller</option>
         </select>
       </div>
+      <div class="table-scroll">
       <table>
         <thead><tr><th>Zaman</th><th>Model</th><th class="mono">Token</th><th class="mono">Maliyet</th></tr></thead>
         <tbody id="recentBody"><tr class="empty-row"><td colspan="4">yukleniyor...</td></tr></tbody>
       </table>
+      </div>
     </section>
   </div>
 
@@ -83,6 +103,7 @@ export function buildDashboardHtml(): string {
         <a id="exportBtn" class="btn btn-secondary" href="/dashboard/api/export" download>Disa aktar</a>
       </div>
     </div>
+    <div class="table-scroll">
     <table>
       <thead>
         <tr>
@@ -91,6 +112,7 @@ export function buildDashboardHtml(): string {
       </thead>
       <tbody id="modelsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
     </table>
+    </div>
   </section>
 
   <section class="card" id="modelFormCard">
@@ -162,10 +184,12 @@ export function buildDashboardHtml(): string {
   <section class="card">
     <h2>Alt ajanlar</h2>
     <div class="hint" id="agentsHint"></div>
+    <div class="table-scroll">
     <table>
       <thead><tr><th>Ad</th><th>Kapsam</th><th>Model</th><th>Tool'lar</th><th></th></tr></thead>
       <tbody id="agentsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
     </table>
+    </div>
     <form id="agentForm" class="agent-form">
       <label>Ad
         <input id="aName" type="text" value="dosya-kodcu" required>

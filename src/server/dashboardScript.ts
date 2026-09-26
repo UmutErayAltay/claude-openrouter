@@ -12,6 +12,9 @@ export const DASHBOARD_JS = `
 (function () {
   "use strict";
 
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var lastMetrics = null;
+
   function qs(id) { return document.getElementById(id); }
 
   function td(text, cls) {
@@ -53,6 +56,78 @@ export const DASHBOARD_JS = `
 
   function fmtDate(ts) {
     return new Date(ts).toLocaleString("tr-TR");
+  }
+
+  function fmtSeconds(n) {
+    if (n === null || n === undefined) return null;
+    return n.toFixed(1) + "s";
+  }
+
+  // Yatay çubuk listelerinin ortak parçası: satır başlığı (ad + değer),
+  // çubuk yuvası ve alt satır. Tek ölçü var, dolayısıyla ızgara şeridi
+  // ekseni de yok — çubuk uzunluğu doğrudan oran.
+  function barRow(name, valueText, subText) {
+    var row = document.createElement("div");
+    row.className = "bar-row";
+
+    var head = document.createElement("div");
+    head.className = "bar-head";
+    var nameEl = document.createElement("span");
+    nameEl.className = "bar-name";
+    nameEl.textContent = name;
+    nameEl.title = name; // full id stays reachable when the label is ellipsized
+    var valueEl = document.createElement("span");
+    valueEl.className = "bar-value";
+    valueEl.textContent = valueText;
+    head.appendChild(nameEl);
+    head.appendChild(valueEl);
+    row.appendChild(head);
+
+    var track = document.createElement("div");
+    track.className = "bar-track";
+    row.appendChild(track);
+
+    if (subText) {
+      var sub = document.createElement("div");
+      sub.className = "bar-sub";
+      sub.textContent = subText;
+      row.appendChild(sub);
+    }
+
+    row.track = track;
+    return row;
+  }
+
+  function fillBar(track, ratio, cls) {
+    var fill = document.createElement("div");
+    fill.className = "bar-fill" + (cls ? " " + cls : "");
+    fill.style.width = (isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) * 100 : 0) + "%";
+    track.appendChild(fill);
+    return fill;
+  }
+
+  // Tooltip'i içeriğe sabitlenmiş bir kutu olarak konumlandırır: çubuk ya da
+  // SVG çubuğu hover edildiğinde de aynı yol çalışsın diye.
+  function showTip(tip, event, text) {
+    tip.textContent = text;
+    tip.classList.add("open");
+    var host = tip.parentNode;
+    var hostBox = host.getBoundingClientRect();
+    var tipBox = tip.getBoundingClientRect();
+    var x = event.clientX - hostBox.left;
+    var half = tipBox.width / 2 + 6;
+    tip.style.left = Math.max(half, Math.min(hostBox.width - half, x)) + "px";
+    tip.style.top = event.clientY - hostBox.top - tipBox.height - 10 + "px";
+  }
+
+  function hideTip(tip) {
+    tip.classList.remove("open");
+  }
+
+  function localDayKey(date) {
+    var month = String(date.getMonth() + 1).padStart(2, "0");
+    var day = String(date.getDate()).padStart(2, "0");
+    return date.getFullYear() + "-" + month + "-" + day;
   }
 
   function api(path, options) {
@@ -227,11 +302,21 @@ export const DASHBOARD_JS = `
     body.appendChild(row);
 
     if (credit.limit !== null && credit.limit > 0) {
+      var ratio = credit.usage / credit.limit;
       var bar = document.createElement("div");
       bar.className = "credit-bar";
       var fill = document.createElement("div");
       fill.className = "credit-bar-fill";
-      var pct = Math.max(0, Math.min(100, (credit.usage / credit.limit) * 100));
+      // Dolgu tonu kullanım oranına göre; boş kısım aynı tonun soluk hâli.
+      // --warning bir grafik serisi değil, yalnızca bu göstergenin orta hâli.
+      var hues = ratio >= 0.85
+        ? ["var(--danger)", "var(--danger-dim)"]
+        : ratio >= 0.6
+          ? ["var(--warning)", "var(--warning-dim)"]
+          : ["var(--success)", "var(--success-dim)"];
+      bar.style.setProperty("--gauge-hue", hues[0]);
+      bar.style.setProperty("--gauge-hue-dim", hues[1]);
+      var pct = Math.max(0, Math.min(100, ratio * 100));
       fill.style.width = pct + "%";
       bar.appendChild(fill);
       body.appendChild(bar);
@@ -249,22 +334,287 @@ export const DASHBOARD_JS = `
     renderProjection();
   }
 
+  function renderStatTiles() {
+    var grid = qs("statGrid");
+    if (!grid) return;
+    var daily = (lastUsage && lastUsage.daily) || [];
+    var last = daily.length ? daily[daily.length - 1] : null;
+    var totalModels = (currentModels || []).length;
+    var successRate = lastMetrics && lastMetrics.totals ? lastMetrics.totals.successRate : null;
+
+    var tiles = [
+      { label: "Bugun harcama", value: last ? fmtMoney(last.cost) : "-", na: !last },
+      { label: "Bugun istek", value: last ? fmtNum(last.requests) : "-", na: !last },
+      {
+        label: "Basari orani",
+        value: successRate === null || successRate === undefined
+          ? "-"
+          : (successRate * 100).toFixed(1) + "%",
+        na: successRate === null || successRate === undefined,
+      },
+      { label: "Ekli model", value: fmtNum(totalModels), na: false },
+    ];
+
+    grid.textContent = "";
+    tiles.forEach(function (tile) {
+      var card = document.createElement("div");
+      card.className = "stat";
+      var label = document.createElement("div");
+      label.className = "label";
+      label.textContent = tile.label;
+      var value = document.createElement("div");
+      value.className = "value" + (tile.na ? " na" : "");
+      value.textContent = tile.value;
+      card.appendChild(label);
+      card.appendChild(value);
+      grid.appendChild(card);
+    });
+  }
+
+  function renderDailyChart(usage) {
+    var host = qs("dailyChart");
+    var tip = qs("dailyTip");
+    host.textContent = "";
+    var daily = usage.daily || [];
+    if (!daily.length) {
+      var empty = document.createElement("p");
+      empty.className = "chart-empty";
+      empty.textContent = "Henuz istek yok";
+      host.appendChild(empty);
+      return;
+    }
+    hideTip(qs("dailyTip"));
+
+    // viewBox kapsayıcının gerçek piksel genişliğine eşitlenir: 1 birim = 1px,
+    // böylece eksen etiketleri dar ekranda da 10px kalır.
+    var W = Math.max(300, Math.round(host.clientWidth || 800));
+    var H = 180;
+    var padL = 54;
+    var padR = 8;
+    var padT = 10;
+    var padB = 24;
+    var innerW = W - padL - padR;
+    var innerH = H - padT - padB;
+    var todayKey = localDayKey(new Date());
+    // Günlük kova boşsa (yalnızca sıfırlar) çubuk/eksen yazdırma.
+    var hasData = daily.some(function (d) { return d.requests > 0 || d.cost > 0; });
+    if (!hasData) {
+      var idle = document.createElement("p");
+      idle.className = "chart-empty";
+      idle.textContent = "Henuz istek yok";
+      host.appendChild(idle);
+      return;
+    }
+    var maxCost = 0;
+    daily.forEach(function (d) { if (d.cost > maxCost) maxCost = d.cost; });
+    var niceMax = maxCost > 0 ? niceCeil(maxCost) : 1;
+
+    var svg = svgEl("svg", {
+      "class": "chart-svg",
+      viewBox: "0 0 " + W + " " + H,
+      role: "img",
+    });
+    svg.setAttribute("aria-label", "Gunluk harcama grafigi");
+
+    // 4 hairline yatay gridline + sol eksende fmtMoney etiketleri.
+    for (var i = 0; i <= 3; i++) {
+      var y = padT + (innerH * i) / 3;
+      var value = niceMax * (1 - i / 3);
+      svg.appendChild(svgEl("line", {
+        "class": "chart-grid",
+        x1: padL, y1: y, x2: W - padR, y2: y,
+      }));
+      var yLabel = svgEl("text", {
+        "class": "chart-y-label",
+        x: padL - 8,
+        y: y + 3,
+        "text-anchor": "end",
+      });
+      yLabel.textContent = fmtMoney(value);
+      svg.appendChild(yLabel);
+    }
+
+    var slot = innerW / daily.length;
+    var barW = Math.min(24, Math.max(3, slot - 4));
+    var labelEvery = Math.max(1, Math.ceil((daily.length * 42) / innerW));
+
+    daily.forEach(function (d, index) {
+      var ratio = maxCost > 0 ? Math.min(1, d.cost / niceMax) : 0;
+      var barH = maxCost > 0 ? Math.max(2, ratio * innerH) : 0;
+      var x = padL + slot * index + (slot - barW) / 2;
+      var y = padT + innerH - barH;
+      // <rect> dört köşeyi de yuvarlar; tabanın köşeli kalması için yol
+      // (path) ile üst köşeler yuvarlatılır, taban çizgisi düz bırakılır.
+      var r = Math.min(4, barW / 2, barH / 2);
+      var rect = svgEl("path", {
+        "class": "chart-bar-rect" + (d.date === todayKey ? " today" : ""),
+        d:
+          "M" + round2(x) + "," + round2(padT + innerH) +
+          "V" + round2(y + r) +
+          "A" + r + "," + r + " 0 0 1 " + round2(x + r) + "," + round2(y) +
+          "H" + round2(x + barW - r) +
+          "A" + r + "," + r + " 0 0 1 " + round2(x + barW) + "," + round2(y + r) +
+          "V" + round2(padT + innerH) + "Z",
+      });
+      rect.style.cursor = "pointer";
+      var title = svgEl("title", {});
+      title.textContent = d.date + ": " + fmtMoney(d.cost) + " (" + d.requests + " istek)";
+      rect.appendChild(title);
+      rect.addEventListener("mousemove", function (event) {
+        showTip(tip, event, title.textContent);
+      });
+      rect.addEventListener("mouseleave", function () { hideTip(tip); });
+      svg.appendChild(rect);
+
+      if (index % labelEvery === 0) {
+        var parts = String(d.date).split("-");
+        var xLabel = svgEl("text", {
+          "class": "chart-x-label",
+          x: round2(x + barW / 2),
+          y: H - 8,
+          "text-anchor": "middle",
+        });
+        xLabel.textContent = parts.length === 3 ? parts[1] + "." + parts[2] : d.date;
+        svg.appendChild(xLabel);
+      }
+    });
+
+    host.appendChild(svg);
+  }
+
+  // Eksen tavanını 1/2/5 x 10^n adımına yuvarlar; böylece etiketler hem
+  // okunaklı kalır hem de tavanın üstünde çubuk kalmaz.
+  function niceCeil(value) {
+    if (!(value > 0)) return 1;
+    var exp = Math.floor(Math.log10(value));
+    var pow = Math.pow(10, exp);
+    var norm = value / pow;
+    var step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+    return step * pow;
+  }
+
+  function round2(n) {
+    return Math.round(n * 100) / 100;
+  }
+
+  function svgEl(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      node.setAttribute(key, attrs[key]);
+    });
+    return node;
+  }
+
+  function renderByModel(usage) {
+    var host = qs("byModelBody");
+    host.textContent = "";
+    var models = usage.byModel || [];
+    if (!models.length) {
+      var empty = document.createElement("p");
+      empty.className = "bar-empty";
+      empty.textContent = "Henuz kayit yok.";
+      host.appendChild(empty);
+      return;
+    }
+    var maxCost = 0;
+    models.forEach(function (m) { if (m.cost > maxCost) maxCost = m.cost; });
+    models.forEach(function (m) {
+      var row = barRow(m.model, fmtMoney(m.cost), fmtNum(m.requests) + " istek");
+      // Tek seri, tek ölçü: çubuk doğrudan en yüksek maliyete oranlı.
+      fillBar(row.track, maxCost > 0 ? m.cost / maxCost : 0);
+      host.appendChild(row);
+    });
+  }
+
+  function renderResults(payload) {
+    lastMetrics = payload;
+    var host = qs("resultsList");
+    var legend = qs("resultsLegend");
+    host.textContent = "";
+    legend.textContent = "";
+
+    function swatch(cls, label) {
+      var item = document.createElement("span");
+      item.className = "legend-item";
+      var box = document.createElement("span");
+      box.className = "swatch " + cls;
+      var text = document.createElement("span");
+      text.textContent = label;
+      item.appendChild(box);
+      item.appendChild(text);
+      legend.appendChild(item);
+    }
+
+    if (!payload || !Array.isArray(payload.models)) {
+      renderResultsEmpty();
+      renderStatTiles();
+      return;
+    }
+
+    swatch("ok", "basarili");
+    swatch("err", "hata");
+
+    var rows = payload.models.filter(function (m) { return m.total > 0; });
+    if (!rows.length) {
+      renderResultsEmpty();
+      renderStatTiles();
+      return;
+    }
+
+    var tip = qs("resultsTip");
+    rows.forEach(function (entry) {
+      var requests = entry.requests || {};
+      var ok = requests.ok || 0;
+      var total = entry.total || 0;
+      var avg = fmtSeconds(entry.avgDurationSeconds);
+      var p95 = fmtSeconds(entry.p95Seconds);
+      var timing = avg === null && p95 === null ? "-" : (avg || "-") + " · p95 " + (p95 || "-");
+
+      var row = barRow(entry.model, ok + "/" + total, timing);
+      var okRatio = total > 0 ? ok / total : 0;
+      var errRatio = total > 0 ? (total - ok) / total : 0;
+      var okSeg = document.createElement("div");
+      okSeg.className = "bar-seg ok";
+      okSeg.style.width = okRatio * 100 + "%";
+      var errSeg = document.createElement("div");
+      errSeg.className = "bar-seg err";
+      errSeg.style.width = errRatio * 100 + "%";
+      row.track.appendChild(okSeg);
+      row.track.appendChild(errSeg);
+
+      // Hata türleri ayrı ayrı: toplam hata tooltip'te tek kalem olmasın.
+      function bindTip(node, text) {
+        node.addEventListener("mousemove", function (event) { showTip(tip, event, text); });
+        node.addEventListener("mouseleave", function () { hideTip(tip); });
+      }
+      bindTip(okSeg, entry.model + " · basarili: " + ok + "/" + total);
+      if (total - ok > 0) {
+        var parts = [];
+        if (requests.upstream_error) parts.push("upstream: " + requests.upstream_error);
+        if (requests.network_error) parts.push("ag: " + requests.network_error);
+        if (requests.no_key) parts.push("anahtar yok: " + requests.no_key);
+        if (requests.stream_error) parts.push("akis: " + requests.stream_error);
+        if (!parts.length) parts.push("diger: " + (total - ok));
+        bindTip(errSeg, entry.model + " · hata: " + parts.join(", "));
+      }
+      host.appendChild(row);
+    });
+
+    renderStatTiles();
+  }
+
+  function renderResultsEmpty() {
+    var host = qs("resultsList");
+    host.textContent = "";
+    var empty = document.createElement("p");
+    empty.className = "bar-empty";
+    empty.textContent = "Henuz veri yok";
+    host.appendChild(empty);
+  }
+
   function renderUsage(usage) {
     lastUsage = usage;
-    var chart = qs("dailyChart");
-    chart.textContent = "";
-    var maxCost = 0;
-    usage.daily.forEach(function (d) { if (d.cost > maxCost) maxCost = d.cost; });
-    usage.daily.forEach(function (d) {
-      var bar = document.createElement("div");
-      bar.className = "chart-bar";
-      bar.style.height = (maxCost > 0 ? Math.max(3, (d.cost / maxCost) * 100) : 3) + "%";
-      var tip = document.createElement("div");
-      tip.className = "chart-tip";
-      tip.textContent = d.date + ": " + fmtMoney(d.cost) + " (" + d.requests + " istek)";
-      bar.appendChild(tip);
-      chart.appendChild(bar);
-    });
+    renderDailyChart(usage);
 
     var totals = qs("usageTotals");
     totals.textContent = "";
@@ -284,14 +634,7 @@ export const DASHBOARD_JS = `
       totals.appendChild(stat("Onbellekten", fmtNum(usage.totals.cachedTokens)));
     }
 
-    var byModelRows = usage.byModel.map(function (m) {
-      var tr = document.createElement("tr");
-      tr.appendChild(td(m.model, "mono"));
-      tr.appendChild(td(String(m.requests)));
-      tr.appendChild(td(fmtMoney(m.cost), "mono"));
-      return tr;
-    });
-    setRows("byModelBody", byModelRows, 3, "Henuz kayit yok.");
+    renderByModel(usage);
 
     var recentRows = usage.recent.map(function (r) {
       var tr = document.createElement("tr");
@@ -305,6 +648,7 @@ export const DASHBOARD_JS = `
     });
     setRows("recentBody", recentRows, 4, "Henuz istek yok.");
     renderProjection();
+    renderStatTiles();
   }
 
   function populateRecentModelFilter(models) {
@@ -401,6 +745,9 @@ export const DASHBOARD_JS = `
 
   function renderModels(models) {
     currentModels = models;
+    // The "Ekli model" tile reads currentModels; the models fetch can land
+    // after usage/metrics, so re-render the tiles here too.
+    renderStatTiles();
     var rows = models.map(function (m) {
       var tr = document.createElement("tr");
 
@@ -676,6 +1023,14 @@ export const DASHBOARD_JS = `
     get("/dashboard/api/health").then(renderHealth).catch(function () {});
   }
 
+  // Bu uç nokta ayrı bir sunucu parçası; yoksa 404 döner. Sayfayı düşürmek
+  // yerine kartı boş durumda bırakıp istatistik satırını yine de tazele.
+  function refreshMetricsSummary() {
+    get("/dashboard/api/metrics-summary")
+      .then(renderResults)
+      .catch(function () { renderResults(null); });
+  }
+
   function refreshLogs() {
     get("/dashboard/api/logs?lines=200")
       .then(function (data) {
@@ -703,6 +1058,7 @@ export const DASHBOARD_JS = `
     refreshUsage();
     refreshModelsAndAgents();
     refreshHealth();
+    refreshMetricsSummary();
   }
 
   function wireModelForm() {
