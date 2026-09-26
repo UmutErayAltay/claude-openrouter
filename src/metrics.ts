@@ -7,6 +7,16 @@
 
 export type RequestOutcome = "ok" | "upstream_error" | "network_error" | "no_key" | "stream_error";
 
+/** Keyed by outcome so adding one to RequestOutcome without listing it here is a type error. */
+const OUTCOMES: Record<RequestOutcome, true> = {
+  ok: true,
+  upstream_error: true,
+  network_error: true,
+  no_key: true,
+  stream_error: true,
+};
+const OUTCOME_LIST = Object.keys(OUTCOMES) as RequestOutcome[];
+
 interface TokenTotals {
   prompt: number;
   completion: number;
@@ -126,6 +136,70 @@ export function renderMetrics(): string {
   }
 
   return lines.join("\n") + "\n";
+}
+
+export interface ModelMetricsSummary {
+  model: string;
+  requests: Record<RequestOutcome, number>;
+  total: number;
+  avgDurationSeconds: number | null;
+  p50Seconds: number | null;
+  p95Seconds: number | null;
+}
+
+export interface MetricsSummary {
+  models: ModelMetricsSummary[];
+  totals: { ok: number; errors: number; total: number; successRate: number | null };
+}
+
+/**
+ * Quantile off the cumulative histogram: the boundary of the first bucket whose
+ * count reaches target, falling back to the widest bucket when even that
+ * doesn't add up (shouldn't happen, but a null-free number beats a wrong one).
+ */
+function quantileFromBuckets(buckets: number[], total: number, quantile: number): number | null {
+  if (total <= 0) return null;
+  const target = total * quantile;
+  for (let i = 0; i < DURATION_BUCKETS.length; i++) {
+    if ((buckets[i] ?? 0) >= target) return DURATION_BUCKETS[i] as number;
+  }
+  return DURATION_BUCKETS[DURATION_BUCKETS.length - 1] as number;
+}
+
+/** JSON view of the same counters renderMetrics exposes, for the dashboard. */
+export function getMetricsSummary(): MetricsSummary {
+  const models = new Set<string>();
+  for (const key of requestsTotal.keys()) {
+    models.add(key.slice(0, key.indexOf(KEY_SEP)));
+  }
+  for (const model of durationBuckets.keys()) {
+    models.add(model);
+  }
+
+  const summaries: ModelMetricsSummary[] = [...models].sort().map((model) => {
+    const requests = Object.fromEntries(
+      OUTCOME_LIST.map((outcome) => [outcome, requestsTotal.get(model + KEY_SEP + outcome) ?? 0]),
+    ) as Record<RequestOutcome, number>;
+    const total = OUTCOME_LIST.reduce((sum, outcome) => sum + (requests[outcome] ?? 0), 0);
+    const count = durationCount.get(model) ?? 0;
+
+    return {
+      model,
+      requests,
+      total,
+      avgDurationSeconds: count > 0 ? (durationSum.get(model) ?? 0) / count : null,
+      p50Seconds: quantileFromBuckets(durationBuckets.get(model) ?? [], count, 0.5),
+      p95Seconds: quantileFromBuckets(durationBuckets.get(model) ?? [], count, 0.95),
+    };
+  });
+
+  const ok = summaries.reduce((sum, entry) => sum + (entry.requests.ok ?? 0), 0);
+  const total = summaries.reduce((sum, entry) => sum + entry.total, 0);
+
+  return {
+    models: summaries,
+    totals: { ok, errors: total - ok, total, successRate: total > 0 ? ok / total : null },
+  };
 }
 
 /** Test-only: clears every counter so one test's numbers don't bleed into the next. */

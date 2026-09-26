@@ -33,6 +33,7 @@ import {
   type ModelInput,
 } from "../modelOps.js";
 import { testModel as testModelImpl, type TestModelResult } from "../modelTest.js";
+import { getMetricsSummary } from "../metrics.js";
 import { tailLines } from "../logTail.js";
 import { spawnReplacementProxy } from "../proxyProcess.js";
 import {
@@ -346,6 +347,11 @@ export async function handleDashboard(
     const recent = Number(url.searchParams.get("recent") ?? "20") || 20;
     const model = url.searchParams.get("model") ?? undefined;
     sendJson(res, 200, aggregateUsage(deps.readUsage(), { days, recent, model, now: deps.now() }));
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/metrics-summary") {
+    sendJson(res, 200, getMetricsSummary());
     return true;
   }
 
