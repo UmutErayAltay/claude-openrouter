@@ -100,3 +100,70 @@ describe("DASHBOARD_JS", () => {
     expect(() => new Function(DASHBOARD_JS)).not.toThrow();
   });
 });
+
+// commit b536331, "Redesign the dashboard as an ops console". The redesign is
+// invisible to the contract above (same ids, same embedding), so these tests
+// pin the pieces that were actually added or moved.
+describe("yeniden tasarim", () => {
+  const html = buildDashboardHtml();
+  const css = DASHBOARD_CSS;
+  const js = DASHBOARD_JS;
+
+  // Splits the stylesheet at the end of the :root block (its first "}").
+  const rootEnd = css.indexOf("}") + 1;
+  const rootBlock = css.slice(0, rootEnd);
+  const cssOutsideRoot = css.slice(rootEnd);
+  // tbodies the redesign moved into a .table-scroll wrapper.
+  const SCROLL_WRAPPED = ["recentBody", "modelsBody", "agentsBody"];
+
+  it("puts the stat tile grid first in main, ahead of the Saglik card", () => {
+    const main = html.slice(html.indexOf("<main>"), html.indexOf("</main>"));
+    const grid = main.indexOf('id="statGrid"');
+    const health = main.indexOf('id="healthCard"');
+    expect(grid).toBeGreaterThan(-1);
+    expect(health).toBeGreaterThan(-1);
+    expect(grid).toBeLessThan(health);
+  });
+
+  it("ships the Istek sonuclari card, fed by the metrics-summary endpoint", () => {
+    expect(html).toContain("Istek sonuclari");
+    expect(js).toContain("/dashboard/api/metrics-summary");
+  });
+
+  it("has no external stylesheet, script, or font dependency", () => {
+    expect(html).not.toContain("<script src=");
+    expect(html).not.toContain('<link rel="stylesheet"');
+    expect(html).not.toContain("cdn");
+    expect(html).not.toContain("fonts.googleapis");
+    expect(html.match(/<style>/g)).toHaveLength(1);
+    expect(html.match(/<script>/g)).toHaveLength(1);
+  });
+
+  it("keeps raw hex colors inside :root only", () => {
+    // :root is the one block the palette is allowed to be literal in.
+    expect(rootBlock).toContain(":root {");
+    expect(cssOutsideRoot).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
+
+  it("keeps the no-backtick, no-interpolation rule the embedding chain needs", () => {
+    expect(js).not.toContain("`");
+    expect(js).not.toContain("${");
+  });
+
+  it("keeps the pre-redesign ids in place", () => {
+    for (const id of REFERENCED_IDS) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  it("wraps each wide table tbody in a .table-scroll box", () => {
+    const opens = [...html.matchAll(/<div class="table-scroll">/g)].map((m) => m.index!);
+    expect(opens.length).toBeGreaterThanOrEqual(SCROLL_WRAPPED.length);
+    for (const id of SCROLL_WRAPPED) {
+      const tbody = html.indexOf(`id="${id}"`);
+      expect(tbody).toBeGreaterThan(-1);
+      const preceding = opens.filter((at) => at < tbody);
+      expect(preceding.length).toBeGreaterThan(0);
+    }
+  });
+});
