@@ -323,6 +323,12 @@ export function buildDashboardHtml(): string {
       <label>Hata orani esigi %
         <input id="sErrorRate" type="number" min="0" step="0.1" placeholder="kapali">
       </label>
+      <label>Gecikme p95 esigi (sn)
+        <input id="sLatencyP95" type="number" min="0" step="0.1" placeholder="kapali">
+      </label>
+      <label>Degerlendirme penceresi (dk)
+        <input id="sWindowMinutes" type="number" min="1" step="1" placeholder="60">
+      </label>
       <label>Webhook URL
         <input id="sWebhook" type="text" placeholder="https://...">
       </label>

@@ -99,6 +99,8 @@ const REFERENCED_IDS = [
   "sBudgetMonthly",
   "sBudgetAction",
   "sErrorRate",
+  "sLatencyP95",
+  "sWindowMinutes",
   "sWebhook",
 ];
 

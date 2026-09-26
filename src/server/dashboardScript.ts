@@ -1829,6 +1829,12 @@ export const DASHBOARD_JS = `
     var alertText = "Uyari: hata >%" +
       (alerts.errorRatePct === undefined || alerts.errorRatePct === null ? "-" : alerts.errorRatePct) +
       ", webhook " + (alerts.webhookUrl ? "var" : "yok");
+    if (alerts.latencyP95Seconds !== undefined && alerts.latencyP95Seconds !== null) {
+      alertText += ", gecikme >" + alerts.latencyP95Seconds + "sn";
+    }
+    if (alerts.windowMinutes !== undefined && alerts.windowMinutes !== null) {
+      alertText += " (" + alerts.windowMinutes + " dk pencere)";
+    }
     qs("settingsSummary").textContent = budgetText + " | " + alertText;
 
     // Kaydet dugmesi kapaliyken de alanlar guncel kalsin ki formu acan
@@ -1837,6 +1843,8 @@ export const DASHBOARD_JS = `
     qs("sBudgetMonthly").value = budget.monthlyUsd === undefined || budget.monthlyUsd === null ? "" : budget.monthlyUsd;
     qs("sBudgetAction").value = budget.action === "block" ? "block" : "warn";
     qs("sErrorRate").value = alerts.errorRatePct === undefined || alerts.errorRatePct === null ? "" : alerts.errorRatePct;
+    qs("sLatencyP95").value = alerts.latencyP95Seconds === undefined || alerts.latencyP95Seconds === null ? "" : alerts.latencyP95Seconds;
+    qs("sWindowMinutes").value = alerts.windowMinutes === undefined || alerts.windowMinutes === null ? "" : alerts.windowMinutes;
     qs("sWebhook").value = alerts.webhookUrl || "";
   }
 
@@ -1881,6 +1889,8 @@ export const DASHBOARD_JS = `
         },
         alerts: {
           errorRatePct: errorRate,
+          latencyP95Seconds: optionalNumber(qs("sLatencyP95").value),
+          windowMinutes: optionalNumber(qs("sWindowMinutes").value),
           webhookUrl: qs("sWebhook").value.trim(),
         },
       })
