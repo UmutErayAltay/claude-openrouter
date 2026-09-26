@@ -163,6 +163,36 @@ main {
   overflow-wrap: anywhere;
 }
 .stat .value.na { color: var(--text-faint); }
+/* Delta notr kalir: artış da alış da renk taşımaz, yalnızca bütçe banner'ı. */
+.stat .delta {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.stat .delta.empty { color: var(--text-faint); }
+
+/* ---- Bütçe / uyarı banner'ı ---- */
+
+.banner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.banner .banner-line { display: block; }
+.banner .banner-note { color: var(--text-dim); font-size: 12px; }
+.banner-warn {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.banner-danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
 
 /* ---- Kredi ---- */
 
@@ -242,6 +272,19 @@ main {
 .chart-bar-rect { fill: var(--series-1); }
 .chart-bar-rect.today { fill: var(--accent); }
 .chart-bar-rect:hover { opacity: 0.75; }
+/* Gecikme grafiği: model başına bir p95 çizgisi, saat kovası boşsa nokta. */
+.chart-line { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart-line.s0 { stroke: var(--series-1); }
+.chart-line.s1 { stroke: var(--accent); }
+.chart-line.s2 { stroke: var(--success); }
+.chart-line.s3 { stroke: var(--warning); }
+.chart-line:hover { stroke-width: 2.5; }
+.chart-line-dot { stroke: none; }
+.chart-line-dot.s0 { fill: var(--series-1); }
+.chart-line-dot.s1 { fill: var(--accent); }
+.chart-line-dot.s2 { fill: var(--success); }
+.chart-line-dot.s3 { fill: var(--warning); }
+.chart-line-dot:hover { opacity: 0.75; }
 .chart-tip {
   display: none;
   position: absolute;
@@ -362,6 +405,10 @@ main {
 }
 .legend .swatch.ok { background: var(--success); }
 .legend .swatch.err { background: var(--danger); }
+.legend .swatch.s0 { background: var(--series-1); }
+.legend .swatch.s1 { background: var(--accent); }
+.legend .swatch.s2 { background: var(--success); }
+.legend .swatch.s3 { background: var(--warning); }
 
 /* ---- Tablolar ---- */
 
@@ -402,6 +449,11 @@ td.mono, th.mono { font-family: var(--mono); white-space: nowrap; }
   z-index: 1;
 }
 tbody tr:hover td { background: var(--bg-elev-2); }
+/* Hatalı istek satırı: okuma hızını artırmak için ince sol kenar + soluk zemin. */
+tr.row-error td { border-bottom-color: var(--danger-border); }
+tr.row-error td:first-child { box-shadow: inset 2px 0 0 var(--danger); }
+tr.row-error:hover td { background: var(--danger-bg); }
+td.outcome { white-space: nowrap; font-family: var(--mono); font-size: 12px; }
 .empty-row td {
   color: var(--text-faint);
   font-style: italic;
@@ -581,6 +633,20 @@ label {
 .health-summary .badge.bad { border-color: var(--danger-border); color: var(--danger); background: var(--danger-bg); }
 
 .filter-select { min-width: 140px; }
+
+/* Ajan satırının sağ ucundaki 24 saatlik sağlık noktası. */
+.agent-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.agent-status.ok { background: var(--success); }
+.agent-status.bad { background: var(--danger); }
+.agent-status.none { background: var(--text-faint); }
+.agent-status-cell { width: 18px; }
 
 .log-toggle {
   display: flex;

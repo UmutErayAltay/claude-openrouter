@@ -34,6 +34,8 @@ export function buildDashboardHtml(): string {
 </header>
 
 <main>
+  <div id="budgetBanner" class="banner hidden"></div>
+
   <div class="stat-grid" id="statGrid">
     <div class="stat"><div class="label">Bugun harcama</div><div class="value na">-</div></div>
     <div class="stat"><div class="label">Bugun istek</div><div class="value na">-</div></div>
@@ -75,6 +77,17 @@ export function buildDashboardHtml(): string {
     <div class="totals" id="usageTotals"></div>
   </section>
 
+  <section class="card" id="latencyCard">
+    <div class="card-header">
+      <h2>Gecikme (son 24 saat)</h2>
+      <div class="legend" id="latencyLegend"></div>
+    </div>
+    <div class="chart-wrap">
+      <div id="latencyChart"></div>
+      <div class="chart-tip" id="latencyTip"></div>
+    </div>
+  </section>
+
   <div class="grid-2">
     <section class="card">
       <h2>Model bazinda harcama</h2>
@@ -83,14 +96,17 @@ export function buildDashboardHtml(): string {
     <section class="card">
       <div class="card-header">
         <h2>Son istekler</h2>
-        <select id="recentModelFilter" class="filter-select">
-          <option value="">Tum modeller</option>
-        </select>
+        <div class="actions">
+          <label class="log-toggle"><input type="checkbox" id="onlyErrorsToggle"> sadece hatalar</label>
+          <select id="recentModelFilter" class="filter-select">
+            <option value="">Tum modeller</option>
+          </select>
+        </div>
       </div>
       <div class="table-scroll recent-scroll">
       <table>
-        <thead><tr><th>Zaman</th><th>Model</th><th class="mono">Token</th><th class="mono">Maliyet</th></tr></thead>
-        <tbody id="recentBody"><tr class="empty-row"><td colspan="4">yukleniyor...</td></tr></tbody>
+        <thead><tr><th>Zaman</th><th>Model</th><th>Sonuc</th><th class="mono">Sure</th><th class="mono">Maliyet</th></tr></thead>
+        <tbody id="recentBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
       </table>
       </div>
     </section>
@@ -193,8 +209,8 @@ export function buildDashboardHtml(): string {
     <div class="hint" id="agentsHint"></div>
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Ad</th><th>Kapsam</th><th>Model</th><th>Tool'lar</th><th></th></tr></thead>
-      <tbody id="agentsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
+      <thead><tr><th>Ad</th><th>Kapsam</th><th>Model</th><th>Tool'lar</th><th class="mono" title="ajanin modeline gore yaklasik">24s istek</th><th class="mono" title="ajanin modeline gore yaklasik">24s maliyet</th><th></th><th></th></tr></thead>
+      <tbody id="agentsBody"><tr class="empty-row"><td colspan="8">yukleniyor...</td></tr></tbody>
     </table>
     </div>
     <div class="hidden" id="agentFormPanel">

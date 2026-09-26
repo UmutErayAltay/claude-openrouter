@@ -13,7 +13,10 @@ export const DASHBOARD_JS = `
   "use strict";
 
   var SVG_NS = "http://www.w3.org/2000/svg";
+  var HOUR_MS_TOTAL = 60 * 60 * 1000;
   var lastMetrics = null;
+  var lastRecent = null;
+  var currentAgents = null;
 
   function qs(id) { return document.getElementById(id); }
 
@@ -387,17 +390,40 @@ export const DASHBOARD_JS = `
     renderProjection();
   }
 
+  // Dünkü değere göre yüzde değişim. Dün 0'ın üzerindeki ilk gün oran
+  // anlamsız olur ("+∞%"), bu yüzden sadece "-" yazılır.
+  function deltaText(today, yesterday) {
+    if (today === null || today === undefined) return "";
+    if (yesterday === null || yesterday === undefined) return "-";
+    if (!yesterday) return "-";
+    var pct = Math.round(((today - yesterday) / yesterday) * 100);
+    if (!pct) return "0% dun gore";
+    return (pct > 0 ? "+" : "") + pct + "% dun gore";
+  }
+
   function renderStatTiles() {
     var grid = qs("statGrid");
     if (!grid) return;
     var daily = (lastUsage && lastUsage.daily) || [];
     var last = daily.length ? daily[daily.length - 1] : null;
+    // daily bugünü sonda tutar; dün sondan ikinci eleman.
+    var prev = daily.length > 1 ? daily[daily.length - 2] : null;
     var totalModels = (currentModels || []).length;
     var successRate = lastMetrics && lastMetrics.totals ? lastMetrics.totals.successRate : null;
 
     var tiles = [
-      { label: "Bugun harcama", value: last ? fmtMoney(last.cost) : "-", na: !last },
-      { label: "Bugun istek", value: last ? fmtNum(last.requests) : "-", na: !last },
+      {
+        label: "Bugun harcama",
+        value: last ? fmtMoney(last.cost) : "-",
+        na: !last,
+        delta: last ? deltaText(last.cost, prev ? prev.cost : null) : "",
+      },
+      {
+        label: "Bugun istek",
+        value: last ? fmtNum(last.requests) : "-",
+        na: !last,
+        delta: last ? deltaText(last.requests, prev ? prev.requests : null) : "",
+      },
       {
         label: "Basari orani",
         value: successRate === null || successRate === undefined
@@ -420,6 +446,12 @@ export const DASHBOARD_JS = `
       value.textContent = tile.value;
       card.appendChild(label);
       card.appendChild(value);
+      if (tile.delta) {
+        var delta = document.createElement("div");
+        delta.className = "delta" + (tile.delta === "-" ? " empty" : "");
+        delta.textContent = tile.delta;
+        card.appendChild(delta);
+      }
       grid.appendChild(card);
     });
   }
@@ -579,6 +611,209 @@ export const DASHBOARD_JS = `
     return node;
   }
 
+  // ---- Gecikme grafiği (son 24 saat, saat kovalı p95) ----
+
+  var LATENCY_HOURS = 24;
+  var LATENCY_MAX_SERIES = 4;
+  var HOURLY_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300];
+
+  // Dakika hassasiyetinde yuvarlar, böylece "14:05:00" gibi etiketler çıkmaz.
+  function hourLabel(hourStart) {
+    var d = new Date(hourStart);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+
+  // p95 ekseni saniye cinsinden; 1200s'yi "20dk" okunur biçimde yazar.
+  function fmtLatency(seconds) {
+    if (seconds === null || seconds === undefined) return "-";
+    if (seconds < 60) return seconds.toFixed(1) + "s";
+    if (seconds < 600) return (seconds / 60).toFixed(1) + "dk";
+    return Math.round(seconds / 60) + "dk";
+  }
+
+  // Eksen tavanı: bir dakikalık adımları önce dener, olmazsa 1/2/5 x 10^n.
+  function latencyCeil(maxValue) {
+    if (!(maxValue > 0)) return 1;
+    for (var i = 0; i < HOURLY_STEPS.length; i++) {
+      if (maxValue <= HOURLY_STEPS[i]) return HOURLY_STEPS[i];
+    }
+    return niceCeil(maxValue);
+  }
+
+  function renderLatencyChart(payload) {
+    var host = qs("latencyChart");
+    var legend = qs("latencyLegend");
+    var tip = qs("latencyTip");
+    if (!host) return;
+    host.textContent = "";
+    legend.textContent = "";
+
+    var timeline = (payload && payload.timeline) || [];
+    // Çizgi kesikliği olmayan bir grafikte, saat kovaları arasında boşluk
+    // yanlış okunmasın diye tüm kovalar birleştirilir.
+    var byModel = {};
+    timeline.forEach(function (bucket) {
+      if (bucket.p95Seconds === null || bucket.p95Seconds === undefined) return;
+      if (!byModel[bucket.model]) byModel[bucket.model] = {};
+      byModel[bucket.model][bucket.hourStart] = bucket;
+    });
+
+    var models = Object.keys(byModel);
+    if (!models.length) {
+      hideTip(tip);
+      var empty = document.createElement("p");
+      empty.className = "chart-empty";
+      empty.textContent = "Henuz veri yok";
+      host.appendChild(empty);
+      return;
+    }
+
+    // En çok istenen ilk 4 model; gerisi grafiğin okunurluğunu bozar.
+    var ranked = models.slice().sort(function (a, b) {
+      var ca = timeline.filter(function (x) { return x.model === a; })
+        .reduce(function (sum, x) { return sum + x.count; }, 0);
+      var cb = timeline.filter(function (x) { return x.model === b; })
+        .reduce(function (sum, x) { return sum + x.count; }, 0);
+      return cb - ca || a.localeCompare(b);
+    });
+    var shown = ranked.slice(0, LATENCY_MAX_SERIES);
+    var hidden = ranked.length - shown.length;
+
+    // Sabit 24 kova: eksen, veri olmayan saatleri de kapsar.
+    var now = Date.now();
+    var lastHour = Math.floor(now / HOUR_MS_TOTAL) * HOUR_MS_TOTAL;
+    var hours = [];
+    for (var i = LATENCY_HOURS - 1; i >= 0; i--) hours.push(lastHour - i * HOUR_MS_TOTAL);
+
+    var maxP95 = 0;
+    shown.forEach(function (model) {
+      hours.forEach(function (hour) {
+        var bucket = byModel[model][hour];
+        if (bucket && bucket.p95Seconds > maxP95) maxP95 = bucket.p95Seconds;
+      });
+    });
+    var top = latencyCeil(maxP95);
+
+    var W = Math.max(300, Math.round(host.clientWidth || 800));
+    var H = 180;
+    var padL = 48;
+    var padR = 8;
+    var padT = 10;
+    var padB = 24;
+    var innerW = W - padL - padR;
+    var innerH = H - padT - padB;
+
+    var svg = svgEl("svg", {
+      "class": "chart-svg",
+      viewBox: "0 0 " + W + " " + H,
+      role: "img",
+    });
+    svg.setAttribute("aria-label", "Saatlik p95 gecikme grafigi");
+
+    for (var g = 0; g <= 3; g++) {
+      var y = padT + (innerH * g) / 3;
+      svg.appendChild(svgEl("line", {
+        "class": "chart-grid",
+        x1: padL, y1: round2(y), x2: W - padR, y2: round2(y),
+      }));
+      var yLabel = svgEl("text", {
+        "class": "chart-y-label",
+        x: padL - 8,
+        y: round2(y + 3),
+        "text-anchor": "end",
+      });
+      yLabel.textContent = fmtLatency(top * (1 - g / 3));
+      svg.appendChild(yLabel);
+    }
+
+    var slot = innerW / hours.length;
+    var labelEvery = Math.max(1, Math.ceil((hours.length * 40) / innerW));
+
+    shown.forEach(function (model, seriesIndex) {
+      var cls = "s" + seriesIndex;
+      var points = [];
+      var used = [];
+      hours.forEach(function (hour, hourIndex) {
+        var bucket = byModel[model][hour];
+        if (!bucket || bucket.p95Seconds === null || bucket.p95Seconds === undefined) return;
+        var x = padL + slot * hourIndex + slot / 2;
+        var y = padT + innerH - Math.min(1, bucket.p95Seconds / top) * innerH;
+        points.push(round2(x) + "," + round2(y));
+        used.push(bucket);
+      });
+      if (!points.length) return;
+
+      if (points.length > 1) {
+        svg.appendChild(svgEl("polyline", {
+          "class": "chart-line " + cls,
+          points: points.join(" "),
+        }));
+      }
+
+      // Kova boşsa çizgi kopuk kalmasın diye uçlara görünmez ama hover'lı
+      // bir hedef koyulur.
+      points.forEach(function (point, index) {
+        var parts = point.split(",");
+        var dot = svgEl("circle", {
+          "class": "chart-line-dot " + cls,
+          cx: parts[0],
+          cy: parts[1],
+          r: points.length > 12 ? 2 : 3,
+        });
+        var bucket = used[index];
+        var text = hourLabel(bucket.hourStart) + " · p95 " + fmtLatency(bucket.p95Seconds) +
+          " · p50 " + fmtLatency(bucket.p50Seconds) +
+          " · " + bucket.count + " istek / " + bucket.errors + " hata";
+        dot.appendChild(svgEl("title", {}));
+        dot.lastChild.textContent = text;
+        dot.addEventListener("mousemove", function (event) { showTip(tip, event, text); });
+        dot.addEventListener("mouseleave", function () { hideTip(tip); });
+        svg.appendChild(dot);
+      });
+
+      var item = document.createElement("span");
+      item.className = "legend-item";
+      var swatch = document.createElement("span");
+      swatch.className = "swatch " + cls;
+      var text = document.createElement("span");
+      text.textContent = model;
+      text.title = model;
+      item.appendChild(swatch);
+      item.appendChild(text);
+      legend.appendChild(item);
+    });
+
+    if (hidden > 0) {
+      var note = document.createElement("span");
+      note.className = "legend-item";
+      note.textContent = "+" + hidden + " model gosterilmedi";
+      legend.appendChild(note);
+    }
+
+    hours.forEach(function (hour, index) {
+      if (index % labelEvery !== 0) return;
+      var xLabel = svgEl("text", {
+        "class": "chart-x-label",
+        x: round2(padL + slot * index + slot / 2),
+        y: H - 8,
+        "text-anchor": "middle",
+      });
+      xLabel.textContent = hourLabel(hour);
+      svg.appendChild(xLabel);
+    });
+
+    host.appendChild(svg);
+  }
+
+  function renderMetricsRecent(payload) {
+    lastRecent = payload;
+    renderRecentRows();
+    renderLatencyChart(payload);
+    // Ajan satırları model bazlı 24 saatlik istatistik okur; yeni veri
+    // geldiği için yeniden çizilmeleri gerekiyor.
+    if (currentAgents) renderAgents(currentAgents);
+  }
+
   function renderByModel(usage) {
     var host = qs("byModelBody");
     host.textContent = "";
@@ -709,20 +944,65 @@ export const DASHBOARD_JS = `
     }
 
     renderByModel(usage);
-
-    var recentRows = usage.recent.map(function (r) {
-      var tr = document.createElement("tr");
-      tr.appendChild(td(fmtDate(r.ts)));
-      tr.appendChild(td(r.model, "mono"));
-      var tokenCell = fmtNum(r.promptTokens) + " / " + fmtNum(r.completionTokens);
-      if (r.cachedTokens) tokenCell += " (" + fmtNum(r.cachedTokens) + " onbellek)";
-      tr.appendChild(td(tokenCell, "mono"));
-      tr.appendChild(td(fmtMoney(r.cost), "mono"));
-      return tr;
-    });
-    setRows("recentBody", recentRows, 4, "Henuz istek yok.");
+    renderRecentRows();
     renderProjection();
     renderStatTiles();
+  }
+
+  // Son istekler tablosu metrics-recent.recent'ten beslenir; maliyet için
+  // usage.recent ile ts+model üzerinden eşleşme yapılır.
+  var OUTCOME_LABELS = {
+    ok: "ok",
+    upstream_error: "upstream",
+    network_error: "ag",
+    no_key: "anahtar yok",
+    stream_error: "akis",
+    budget_blocked: "butce",
+  };
+
+  function renderRecentRows() {
+    var tbody = qs("recentBody");
+    if (!tbody) return;
+    var recent = (lastRecent && lastRecent.recent) || [];
+    var filter = qs("recentModelFilter").value;
+    var onlyErrors = qs("onlyErrorsToggle").checked;
+
+    // Maliyet, aynı isteğin usage kaydıyla eşleşir; eşleşmezse "-".
+    var costByKey = {};
+    var usageRecent = (lastUsage && lastUsage.recent) || [];
+    usageRecent.forEach(function (r) {
+      costByKey[r.ts + "|" + r.model] = r.cost;
+    });
+
+    var rows = recent.filter(function (r) {
+      if (filter && r.model !== filter) return false;
+      if (onlyErrors && r.outcome === "ok") return false;
+      return true;
+    }).map(function (r) {
+      var isError = r.outcome !== "ok";
+      var tr = document.createElement("tr");
+      if (isError) tr.className = "row-error";
+
+      tr.appendChild(td(fmtDate(r.ts), "mono"));
+
+      var modelCell = td(r.model, "mono");
+      modelCell.title = r.model;
+      tr.appendChild(modelCell);
+
+      var outcomeCell = td(OUTCOME_LABELS[r.outcome] || r.outcome, "outcome");
+      // Hata metni hücreye sığmaz; başlığa taşınır.
+      if (r.error) outcomeCell.title = r.error;
+      tr.appendChild(outcomeCell);
+
+      tr.appendChild(td(fmtSeconds(r.durationSeconds) || "-", "mono"));
+
+      var cost = costByKey[r.ts + "|" + r.model];
+      tr.appendChild(td(cost === undefined ? "-" : fmtMoney(cost), "mono"));
+
+      return tr;
+    });
+
+    setRows("recentBody", rows, 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
   }
 
   function populateRecentModelFilter(models) {
@@ -999,10 +1279,34 @@ export const DASHBOARD_JS = `
     if (previous) select.value = previous;
   }
 
+  // Bir modelin son 24 saatteki istek/hata sayısı ve maliyeti. Ajan satırı
+  // "ajanın modeli" üzerinden okur, yani değerler ajana özel değil modele
+  // özeldir — sütun başlığı da bunu söyler.
+  function modelStats24h() {
+    var stats = {};
+    var cutoff = Date.now() - 24 * HOUR_MS_TOTAL;
+    var recent = (lastRecent && lastRecent.recent) || [];
+    recent.forEach(function (r) {
+      if (r.ts < cutoff) return;
+      var entry = stats[r.model] || (stats[r.model] = { count: 0, errors: 0, cost: 0 });
+      entry.count += 1;
+      if (r.outcome !== "ok") entry.errors += 1;
+    });
+    var usageRecent = (lastUsage && lastUsage.recent) || [];
+    usageRecent.forEach(function (r) {
+      if (r.ts < cutoff) return;
+      if (!stats[r.model]) return;
+      stats[r.model].cost += r.cost || 0;
+    });
+    return stats;
+  }
+
   function renderAgents(payload) {
     qs("agentsHint").textContent =
       "Proje: " + payload.projectDir + "   |   Kullanici: " + payload.userDir;
+    currentAgents = payload;
 
+    var stats = modelStats24h();
     var rows = payload.agents.map(function (agent) {
       var tr = document.createElement("tr");
       tr.appendChild(td(agent.name));
@@ -1030,6 +1334,10 @@ export const DASHBOARD_JS = `
       tr.appendChild(modelCell);
 
       tr.appendChild(td((agent.tools || []).join(", ") || "-"));
+
+      var stat = agent.model ? stats[agent.model] : null;
+      tr.appendChild(td(stat ? fmtNum(stat.count) : "-", "mono"));
+      tr.appendChild(td(stat ? fmtMoney(stat.cost) : "-", "mono"));
 
       var actionsCell = document.createElement("td");
       var actionsWrap = document.createElement("div");
@@ -1083,9 +1391,67 @@ export const DASHBOARD_JS = `
       actionsCell.appendChild(actionsWrap);
       tr.appendChild(actionsCell);
 
+      // Satırın sonu tek bir nokta: o modelde son 24 saatte ne olduğu.
+      var statusCell = document.createElement("td");
+      statusCell.className = "agent-status-cell";
+      var status = document.createElement("span");
+      if (!stat) {
+        status.className = "agent-status none";
+        status.title = agent.model
+          ? "Bu modelde son 24 saatte istek yok."
+          : "Model belirtilmedigi icin 24 saatlik istatistik yok.";
+      } else if (stat.errors / stat.count > 0.25) {
+        status.className = "agent-status bad";
+        status.title = "Son 24 saatte " + stat.count + " istekten " + stat.errors +
+          " tanesi hatali (%" + Math.round((stat.errors / stat.count) * 100) + ").";
+      } else {
+        status.className = "agent-status ok";
+        status.title = "Son 24 saatte " + stat.count + " istek, " + stat.errors + " hata.";
+      }
+      statusCell.appendChild(status);
+      tr.appendChild(statusCell);
+
       return tr;
     });
-    setRows("agentsBody", rows, 5, "Hic alt ajan yok.");
+    setRows("agentsBody", rows, 7, "Hic alt ajan yok.");
+  }
+
+  // Bütçe ve uyarı aynı şeritte okunur: ikisi de "şu an dikkat edilecek
+  // bir şey var mı" sorusuna yanıt veriyor.
+  function renderBanner(budget, alerts) {
+    var banner = qs("budgetBanner");
+    banner.textContent = "";
+    banner.className = "banner";
+
+    var level = budget ? budget.level : "ok";
+    var limit = budget && budget.dailyUsd !== undefined ? budget.dailyUsd : null;
+    if (level === "warn" || level === "over") {
+      var text = (level === "warn" ? "Butce %80 asildi: bugun " : "Butce asildi: bugun ") +
+        fmtMoney(budget.todayUsd);
+      if (limit !== null) text += " / limit " + fmtMoney(limit);
+      // Engel yalnızca sunucu tarafında gerçekten engelliyorsa anlamlı.
+      if (level === "over" && budget.exceeded) text += " - ucretli modeller engelleniyor";
+      banner.classList.add(level === "warn" ? "banner-warn" : "banner-danger");
+      banner.appendChild(bannerLine(text));
+    }
+
+    // Uyarı son bir saatte tetiklendiyse aynı şeridin altında ikinci satır.
+    var firedAt = alerts ? alerts.lastFiredAt : null;
+    if (firedAt !== null && firedAt !== undefined && Date.now() - firedAt <= HOUR_MS_TOTAL) {
+      if (level === "ok") banner.classList.add("banner-warn");
+      var note = bannerLine("Uyari tetiklendi: " + (alerts.lastReason || "bilinmeyen neden"));
+      note.className = "banner-line banner-note";
+      banner.appendChild(note);
+    }
+
+    banner.classList.toggle("hidden", banner.textContent === "");
+  }
+
+  function bannerLine(text) {
+    var line = document.createElement("span");
+    line.className = "banner-line";
+    line.textContent = text;
+    return line;
   }
 
   function refreshStatusAndCredit() {
@@ -1094,6 +1460,28 @@ export const DASHBOARD_JS = `
       .then(renderCredit)
       .catch(function (err) {
         renderCredit({ ok: false, reason: "unreachable", message: err.message });
+      });
+  }
+
+  // İki uç nokta bağımsız; biri düşerse banner yine de çizilir.
+  function refreshBanner() {
+    var budget = null;
+    var alerts = null;
+    get("/dashboard/api/budget").then(function (data) {
+      budget = data;
+      renderBanner(budget, alerts);
+    }).catch(function () {});
+    get("/dashboard/api/alerts").then(function (data) {
+      alerts = data;
+      renderBanner(budget, alerts);
+    }).catch(function () {});
+  }
+
+  function refreshMetricsRecent() {
+    get("/dashboard/api/metrics-recent")
+      .then(renderMetricsRecent)
+      .catch(function () {
+        renderMetricsRecent(null);
       });
   }
 
@@ -1144,6 +1532,8 @@ export const DASHBOARD_JS = `
     refreshModelsAndAgents();
     refreshHealth();
     refreshMetricsSummary();
+    refreshMetricsRecent();
+    refreshBanner();
   }
 
   function wireModelForm() {
@@ -1343,7 +1733,12 @@ export const DASHBOARD_JS = `
   }
 
   function wireRecentFilter() {
-    qs("recentModelFilter").addEventListener("change", function () { refreshUsage(); });
+    qs("recentModelFilter").addEventListener("change", function () {
+      refreshUsage();
+      renderRecentRows();
+    });
+    // Yalnızca istemci tarafı bir süzgeç: yeniden istek atmaya gerek yok.
+    qs("onlyErrorsToggle").addEventListener("change", renderRecentRows);
   }
 
   function hideAgentForm() {
