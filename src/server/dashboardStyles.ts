@@ -117,6 +117,9 @@ main {
   margin-bottom: 12px;
 }
 .card-header h2 { margin: 0; }
+/* Bir kart gövdesi gizlendiğinde başlığın altındaki boşluk da düşer: bitişik
+   kart yukarı kaymasın, sadece başlık satırı kalsın. */
+.card-header:has(+.hidden) { margin-bottom: 0; }
 
 .grid-2 {
   display: grid;
@@ -504,7 +507,11 @@ label {
 }
 .model-form .span-3 { grid-column: span 3; }
 .model-form .form-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+/* Ajan formu 4 kolonlu bir ızgarada; Vazgec'i kendi satırına al. */
+.agent-form .form-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
 .hidden { display: none !important; }
+/* Gizli bir liste kart gövdesinin son parçasıysa son boşluğu da düşer. */
+.health-card .health-list.hidden { display: none !important; margin: 0; padding: 0; }
 
 .hint { color: var(--text-faint); font-size: 11px; margin-bottom: 10px; }
 
@@ -557,6 +564,21 @@ label {
   font-size: 11px;
   font-family: var(--mono);
 }
+
+/* Sağlık kartı her şey yolundayken tek satıra inen özet. */
+.health-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.health-summary:empty { display: none; }
+.health-summary .health-note {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.health-summary .badge.ok { border-color: var(--success-border); color: var(--success); }
+.health-summary .badge.bad { border-color: var(--danger-border); color: var(--danger); background: var(--danger-bg); }
 
 .filter-select { min-width: 140px; }
 

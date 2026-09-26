@@ -41,8 +41,11 @@ export function buildDashboardHtml(): string {
     <div class="stat"><div class="label">Ekli model</div><div class="value">-</div></div>
   </div>
 
-  <section class="card" id="healthCard">
-    <h2>Saglik durumu</h2>
+  <section class="card health-card" id="healthCard">
+    <div class="card-header">
+      <h2>Saglik durumu</h2>
+      <div class="health-summary" id="healthSummary"></div>
+    </div>
     <ul class="health-list" id="healthList"><li class="empty-row">yukleniyor...</li></ul>
   </section>
 
@@ -64,7 +67,7 @@ export function buildDashboardHtml(): string {
   </section>
 
   <section class="card">
-    <h2>Gunluk harcama (son 14 gun)</h2>
+    <h2 id="dailyChartTitle">Gunluk harcama (son 14 gun)</h2>
     <div class="chart-wrap">
       <div id="dailyChart"></div>
       <div class="chart-tip" id="dailyTip"></div>
@@ -97,6 +100,7 @@ export function buildDashboardHtml(): string {
     <div class="card-header">
       <h2>Ekli modeller</h2>
       <div class="actions">
+        <button id="newModelBtn" class="btn" type="button">+ Yeni model</button>
         <span class="badge" id="syncStatusBadge">-</span>
         <button id="syncBtn" class="btn" type="button">Menuye yaz</button>
         <button id="revertBtn" class="btn btn-secondary" type="button">Son sync'i geri al</button>
@@ -115,7 +119,7 @@ export function buildDashboardHtml(): string {
     </div>
   </section>
 
-  <section class="card" id="modelFormCard">
+  <section class="card hidden" id="modelFormCard">
     <h2 id="modelFormTitle">Model ekle</h2>
     <div class="search-row">
       <input id="catalogSearch" type="text" placeholder="OpenRouter kataloginda ara (ornek: deepseek, gpt-5, qwen)" autocomplete="off">
@@ -182,7 +186,10 @@ export function buildDashboardHtml(): string {
   </section>
 
   <section class="card">
-    <h2>Alt ajanlar</h2>
+    <div class="card-header">
+      <h2>Alt ajanlar</h2>
+      <button id="newAgentBtn" class="btn" type="button">+ Ajan olustur</button>
+    </div>
     <div class="hint" id="agentsHint"></div>
     <div class="table-scroll">
     <table>
@@ -190,6 +197,7 @@ export function buildDashboardHtml(): string {
       <tbody id="agentsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
     </table>
     </div>
+    <div class="hidden" id="agentFormPanel">
     <form id="agentForm" class="agent-form">
       <label>Ad
         <input id="aName" type="text" value="dosya-kodcu" required>
@@ -203,16 +211,23 @@ export function buildDashboardHtml(): string {
           <option value="user">Kullanici (~/.claude/agents)</option>
         </select>
       </label>
-      <button type="submit" class="btn">Ajan olustur</button>
+      <div class="form-actions">
+        <button type="submit" class="btn">Ajan olustur</button>
+        <button type="button" class="btn btn-secondary" id="agentFormCancel">Vazgec</button>
+      </div>
     </form>
+    </div>
   </section>
 
   <section class="card">
     <div class="card-header">
       <h2>Proxy loglari</h2>
-      <label class="log-toggle"><input type="checkbox" id="logAutoRefresh" checked> otomatik yenile</label>
+      <div class="actions">
+        <button id="logToggleBtn" class="btn btn-small btn-secondary" type="button">Goster</button>
+        <label class="log-toggle"><input type="checkbox" id="logAutoRefresh" checked> otomatik yenile</label>
+      </div>
     </div>
-    <pre id="logBox" class="log-box">yukleniyor...</pre>
+    <pre id="logBox" class="log-box hidden">yukleniyor...</pre>
   </section>
 </main>
 

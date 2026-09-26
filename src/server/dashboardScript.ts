@@ -187,18 +187,67 @@ export const DASHBOARD_JS = `
     }
   }
 
+  // "Detay" düğmesi yalnızca sorun yokken anlamlı: bir kontrol düşünce liste
+  // zaten açık kalır ve düğmenin durumu her tazelemede yeniden yazılır.
+  var healthAllOk = false;
+  // Once the user opens/closes the detail list, refreshes stop overriding it.
+  var healthUserToggled = false;
+
+  function renderHealthSummary(summaryHost, okCount, total) {
+    summaryHost.textContent = "";
+    if (!total) {
+      healthAllOk = false;
+      return;
+    }
+    healthAllOk = okCount === total;
+
+    var badge = document.createElement("span");
+    badge.className = "badge " + (healthAllOk ? "ok" : "bad");
+    badge.textContent = okCount + "/" + total + " saglikli";
+    summaryHost.appendChild(badge);
+
+    var note = document.createElement("span");
+    note.className = "health-note";
+    note.textContent = healthAllOk ? "hepsi yolunda" : okCount + " kontrol dikkat gerektiriyor";
+    summaryHost.appendChild(note);
+
+    if (healthAllOk) {
+      var detailBtn = document.createElement("button");
+      detailBtn.type = "button";
+      detailBtn.className = "btn btn-small btn-secondary";
+      var list = qs("healthList");
+      var open = !list.classList.contains("hidden");
+      detailBtn.textContent = open ? "Gizle" : "Detay";
+      detailBtn.addEventListener("click", function () {
+        healthUserToggled = true;
+        var hidden = list.classList.toggle("hidden");
+        detailBtn.textContent = hidden ? "Detay" : "Gizle";
+      });
+      summaryHost.appendChild(detailBtn);
+    }
+  }
+
   function renderHealth(payload) {
     var list = qs("healthList");
+    var summary = qs("healthSummary");
     list.textContent = "";
     var checks = payload.checks || [];
     if (!checks.length) {
+      summary.textContent = "";
+      healthAllOk = false;
       var empty = document.createElement("li");
       empty.className = "empty-row";
       empty.textContent = "kontrol yok";
       list.appendChild(empty);
       return;
     }
+    // Sorunlu satırlar önce: okunacak ilk şey odur.
+    checks = checks.slice().sort(function (a, b) {
+      return (a.ok === b.ok ? 0 : a.ok ? 1 : -1);
+    });
+    var okCount = 0;
     checks.forEach(function (check) {
+      if (check.ok) okCount++;
       var li = document.createElement("li");
       li.className = check.ok ? "ok" : "fail";
       var icon = document.createElement("span");
@@ -216,6 +265,10 @@ export const DASHBOARD_JS = `
       }
       list.appendChild(li);
     });
+    // Visibility first, then the summary (its button text reads the list state).
+    if (okCount !== checks.length) list.classList.remove("hidden");
+    else if (!healthUserToggled) list.classList.add("hidden");
+    renderHealthSummary(summary, okCount, checks.length);
   }
 
   var lastCredit = null;
@@ -376,6 +429,7 @@ export const DASHBOARD_JS = `
     var tip = qs("dailyTip");
     host.textContent = "";
     var daily = usage.daily || [];
+    qs("dailyChartTitle").textContent = "Gunluk harcama (son 14 gun)";
     if (!daily.length) {
       var empty = document.createElement("p");
       empty.className = "chart-empty";
@@ -406,15 +460,30 @@ export const DASHBOARD_JS = `
       return;
     }
     var maxCost = 0;
-    daily.forEach(function (d) { if (d.cost > maxCost) maxCost = d.cost; });
-    var niceMax = maxCost > 0 ? niceCeil(maxCost) : 1;
+    var maxRequests = 0;
+    daily.forEach(function (d) {
+      if (d.cost > maxCost) maxCost = d.cost;
+      if (d.requests > maxRequests) maxRequests = d.requests;
+    });
+    // Maliyet tümüyle sıfır ama istek varsa boş bir "$0.00" grafiğinin yerine
+    // istek hacmi çizilir: ölçü değişir, eksen tek kalır.
+    var byRequests = maxCost === 0 && maxRequests > 0;
+    var valueOf = byRequests
+      ? function (d) { return d.requests; }
+      : function (d) { return d.cost; };
+    var maxValue = byRequests ? maxRequests : maxCost;
+    var niceMax = maxValue > 0 ? niceCeil(maxValue) : 1;
+    var chartTitle = qs("dailyChartTitle");
+    chartTitle.textContent = byRequests
+      ? "Gunluk istek (son 14 gun)"
+      : "Gunluk harcama (son 14 gun)";
 
     var svg = svgEl("svg", {
       "class": "chart-svg",
       viewBox: "0 0 " + W + " " + H,
       role: "img",
     });
-    svg.setAttribute("aria-label", "Gunluk harcama grafigi");
+    svg.setAttribute("aria-label", byRequests ? "Gunluk istek grafigi" : "Gunluk harcama grafigi");
 
     // 4 hairline yatay gridline + sol eksende fmtMoney etiketleri.
     for (var i = 0; i <= 3; i++) {
@@ -430,7 +499,9 @@ export const DASHBOARD_JS = `
         y: y + 3,
         "text-anchor": "end",
       });
-      yLabel.textContent = fmtMoney(value);
+      yLabel.textContent = byRequests
+        ? fmtNum(Math.round(value))
+        : fmtMoney(value);
       svg.appendChild(yLabel);
     }
 
@@ -439,8 +510,8 @@ export const DASHBOARD_JS = `
     var labelEvery = Math.max(1, Math.ceil((daily.length * 42) / innerW));
 
     daily.forEach(function (d, index) {
-      var ratio = maxCost > 0 ? Math.min(1, d.cost / niceMax) : 0;
-      var barH = maxCost > 0 ? Math.max(2, ratio * innerH) : 0;
+      var ratio = maxValue > 0 ? Math.min(1, valueOf(d) / niceMax) : 0;
+      var barH = maxValue > 0 ? Math.max(2, ratio * innerH) : 0;
       var x = padL + slot * index + (slot - barW) / 2;
       var y = padT + innerH - barH;
       // <rect> dört köşeyi de yuvarlar; tabanın köşeli kalması için yol
@@ -458,7 +529,10 @@ export const DASHBOARD_JS = `
       });
       rect.style.cursor = "pointer";
       var title = svgEl("title", {});
-      title.textContent = d.date + ": " + fmtMoney(d.cost) + " (" + d.requests + " istek)";
+      // İki ölçü varsa ikisi de tooltip'te görünür; eksen tek ölçüyü anlatır.
+      title.textContent = byRequests
+        ? d.date + ": " + fmtNum(d.requests) + " istek · " + fmtMoney(d.cost)
+        : d.date + ": " + fmtMoney(d.cost) + " (" + d.requests + " istek)";
       rect.appendChild(title);
       rect.addEventListener("mousemove", function (event) {
         showTip(tip, event, title.textContent);
@@ -672,11 +746,21 @@ export const DASHBOARD_JS = `
 
   var editingModelId = null;
 
+  function showModelForm() {
+    qs("modelFormCard").classList.remove("hidden");
+  }
+
+  // Kapatma yalnızca gizler: "Ekli modeller" kartına geri sıçramaz.
+  function hideModelForm() {
+    qs("modelFormCard").classList.add("hidden");
+  }
+
   function switchToAddMode() {
     editingModelId = null;
     qs("modelFormTitle").textContent = "Model ekle";
     qs("modelFormSubmit").textContent = "Ekle";
-    qs("modelFormCancel").classList.add("hidden");
+    // Vazgec artık yalnızca "düzenle"de değil, kartı kapatmak için de görünür.
+    qs("modelFormCancel").classList.remove("hidden");
     qs("modelForm").reset();
     qs("fModelId").disabled = false;
   }
@@ -699,6 +783,7 @@ export const DASHBOARD_JS = `
     qs("fQuantizations").value = (model.quantizations || []).join(",");
     qs("fMaxPriceIn").value = (model.maxPrice && model.maxPrice.prompt) || "";
     qs("fMaxPriceOut").value = (model.maxPrice && model.maxPrice.completion) || "";
+    showModelForm();
     qs("modelFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1092,13 +1177,36 @@ export const DASHBOARD_JS = `
             toast(wasEditing ? "Model guncellendi." : "Model eklendi.", "success");
           }
           switchToAddMode();
+          hideModelForm();
           return refreshModelsAndAgents();
         })
         .catch(function (err) { toast(err.message, "error"); })
         .then(function () { submitBtn.disabled = false; });
     });
 
-    qs("modelFormCancel").addEventListener("click", function () { switchToAddMode(); });
+    qs("newModelBtn").addEventListener("click", function () {
+      switchToAddMode();
+      showModelForm();
+      qs("modelFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
+      qs("fModelId").focus();
+    });
+
+    qs("modelFormCancel").addEventListener("click", function () {
+      switchToAddMode();
+      hideModelForm();
+    });
+  }
+
+  function wireEscapeToCloseForms() {
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") return;
+      if (!qs("modelFormCard").classList.contains("hidden")) {
+        switchToAddMode();
+        hideModelForm();
+        return;
+      }
+      if (!qs("agentFormPanel").classList.contains("hidden")) hideAgentForm();
+    });
   }
 
   function wireCatalogSearch() {
@@ -1201,9 +1309,36 @@ export const DASHBOARD_JS = `
   }
 
   function wireLogViewer() {
-    refreshLogs();
+    var box = qs("logBox");
+    var button = qs("logToggleBtn");
+    var open = false;
+    try {
+      open = window.localStorage.getItem("cor.logOpen") === "1";
+    } catch (err) {
+      open = false; // depolama erişimi kapalıysa varsayılan gizli
+    }
+
+    function render() {
+      box.classList.toggle("hidden", !open);
+      button.textContent = open ? "Gizle" : "Goster";
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    button.addEventListener("click", function () {
+      open = !open;
+      try {
+        window.localStorage.setItem("cor.logOpen", open ? "1" : "0");
+      } catch (err) {
+        /* gizlilik modu: durum yalnızca bu oturumda tutulur */
+      }
+      render();
+      if (open) refreshLogs();
+    });
+
+    render();
+    if (open) refreshLogs();
     window.setInterval(function () {
-      if (!document.hidden && qs("logAutoRefresh").checked) refreshLogs();
+      if (!document.hidden && open && qs("logAutoRefresh").checked) refreshLogs();
     }, 5000);
   }
 
@@ -1211,7 +1346,18 @@ export const DASHBOARD_JS = `
     qs("recentModelFilter").addEventListener("change", function () { refreshUsage(); });
   }
 
+  function hideAgentForm() {
+    qs("agentFormPanel").classList.add("hidden");
+  }
+
   function wireAgentForm() {
+    qs("newAgentBtn").addEventListener("click", function () {
+      qs("agentFormPanel").classList.remove("hidden");
+      qs("aName").focus();
+    });
+
+    qs("agentFormCancel").addEventListener("click", function () { hideAgentForm(); });
+
     qs("agentForm").addEventListener("submit", function (event) {
       event.preventDefault();
       var name = qs("aName").value.trim();
@@ -1221,6 +1367,7 @@ export const DASHBOARD_JS = `
       post("/dashboard/api/agents/create", { name: name, modelId: modelId, scope: scope })
         .then(function (result) {
           toast((result.overwritten ? "Guncellendi: " : "Olusturuldu: ") + result.path, "success");
+          hideAgentForm();
           return refreshAgents();
         })
         .catch(function (err) { toast(err.message, "error"); });
@@ -1236,6 +1383,7 @@ export const DASHBOARD_JS = `
     wireProxyControls();
     wireLogViewer();
     wireRecentFilter();
+    wireEscapeToCloseForms();
     refreshAll();
     window.setInterval(function () {
       if (!document.hidden) refreshAll();
