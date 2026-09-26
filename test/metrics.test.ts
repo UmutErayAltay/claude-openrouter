@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMetricsSummary,
   getRecentRequests,
+  getWindowedMetrics,
   recordRequest,
   recordUsageMetrics,
   renderMetrics,
@@ -465,5 +466,109 @@ describe("errorRate1h", () => {
     vi.setSystemTime(NOW + HOUR_MS + 1000);
 
     expect(getMetricsSummary().totals.errorRate1h).toBeNull();
+  });
+});
+
+describe("getWindowedMetrics", () => {
+  const NOW = new Date("2026-09-26T12:00:00Z").getTime();
+
+  it("reports an empty window as nulls and a zero count, not NaN", () => {
+    expect(getWindowedMetrics(HOUR_MS, NOW)).toEqual({
+      errorRate: null,
+      p95Seconds: null,
+      requestCount: 0,
+    });
+  });
+
+  it("leaves out requests older than the window", () => {
+    for (let i = 0; i < 8; i++) {
+      recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 1, ts: NOW - 2 * HOUR_MS });
+    }
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 3, ts: NOW - 10 * 60_000 });
+
+    expect(getWindowedMetrics(HOUR_MS, NOW)).toMatchObject({
+      errorRate: 0,
+      requestCount: 1,
+      p95Seconds: 3,
+    });
+  });
+
+  it("counts a request sitting exactly on the window edge as inside", () => {
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 1, ts: NOW - HOUR_MS });
+
+    expect(getWindowedMetrics(HOUR_MS, NOW).requestCount).toBe(1);
+  });
+
+  it("returns null rates when every request is older than the window", () => {
+    recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 1, ts: NOW - 2 * HOUR_MS });
+
+    expect(getWindowedMetrics(HOUR_MS, NOW)).toEqual({
+      errorRate: null,
+      p95Seconds: null,
+      requestCount: 0,
+    });
+  });
+
+  it("is the failed share of the in-window requests", () => {
+    for (const outcome of ["ok", "ok", "upstream_error", "no_key"] as const) {
+      recordRequest({ model: "x", outcome, durationSeconds: 1, ts: NOW });
+    }
+
+    expect(getWindowedMetrics(HOUR_MS, NOW).errorRate).toBe(0.5);
+  });
+
+  it("takes the successful requests as the p95 sample", () => {
+    // 4 ok durations: p95 is ceil(0.95 * 4) = 4, the largest of them.
+    for (const durationSeconds of [1, 2, 3, 4]) {
+      recordRequest({ model: "x", outcome: "ok", durationSeconds, ts: NOW });
+    }
+
+    expect(getWindowedMetrics(HOUR_MS, NOW).p95Seconds).toBe(4);
+  });
+
+  it("keeps blocked zero-duration requests out of p95 while counting them as failures", () => {
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 30, ts: NOW });
+    recordRequest({ model: "x", outcome: "budget_blocked", durationSeconds: 0, ts: NOW });
+    recordRequest({ model: "x", outcome: "quota_exhausted", durationSeconds: 0, ts: NOW });
+    recordRequest({ model: "x", outcome: "price_drift_blocked", durationSeconds: 0, ts: NOW });
+
+    const windowed = getWindowedMetrics(HOUR_MS, NOW);
+    // One success out of four, and the lone success is the only latency sample.
+    expect(windowed.errorRate).toBe(0.75);
+    expect(windowed.p95Seconds).toBe(30);
+    expect(windowed.requestCount).toBe(4);
+  });
+
+  it("has no p95 when nothing in the window succeeded", () => {
+    recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 9, ts: NOW });
+    recordRequest({ model: "x", outcome: "network_error", durationSeconds: 9, ts: NOW });
+
+    const windowed = getWindowedMetrics(HOUR_MS, NOW);
+    expect(windowed.p95Seconds).toBeNull();
+    expect(windowed.errorRate).toBe(1);
+  });
+
+  it("reads a wider window when asked for one", () => {
+    // 90 minutes ago: outside the default hour, inside a two-hour window.
+    for (let i = 0; i < 5; i++) {
+      recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 1, ts: NOW - 90 * 60_000 });
+    }
+    recordRequest({ model: "x", outcome: "ok", durationSeconds: 2, ts: NOW - 5 * 60_000 });
+
+    expect(getWindowedMetrics(HOUR_MS, NOW).requestCount).toBe(1);
+    expect(getWindowedMetrics(2 * HOUR_MS, NOW).requestCount).toBe(6);
+    expect(getWindowedMetrics(2 * HOUR_MS, NOW).errorRate).toBeCloseTo(5 / 6, 10);
+  });
+
+  it("defaults now to the wall clock when the caller doesn't pass one", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(NOW);
+      recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 1 });
+
+      expect(getWindowedMetrics(HOUR_MS)).toMatchObject({ errorRate: 1, requestCount: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

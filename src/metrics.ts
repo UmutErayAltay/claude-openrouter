@@ -276,17 +276,49 @@ export function getMetricsSummary(): MetricsSummary {
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-/** Failed share of the requests seen in the last hour; null when there were none. */
-function errorRateOverLastHour(): number | null {
-  const cutoff = Date.now() - ONE_HOUR_MS;
-  let total = 0;
+export interface WindowedMetrics {
+  /** Failed share of the window; null when nothing was requested in it. */
+  errorRate: number | null;
+  /** p95 of the successful requests only; null when none succeeded. */
+  p95Seconds: number | null;
+  requestCount: number;
+}
+
+/**
+ * The last `windowMs` of recorded requests, which is what the alert thresholds
+ * are judged against. p95 covers the "ok" requests alone: a blocked request
+ * (budget, quota, price drift) is recorded with a zero duration and would drag
+ * the number to a latency that never happened.
+ */
+export function getWindowedMetrics(windowMs: number, now: number = Date.now()): WindowedMetrics {
+  const cutoff = now - windowMs;
+  let requestCount = 0;
   let errors = 0;
+  const durations: number[] = [];
+
   for (const request of recentRequests) {
     if (request.ts < cutoff) continue;
-    total += 1;
-    if (request.outcome !== "ok") errors += 1;
+    requestCount += 1;
+    if (request.outcome !== "ok") {
+      errors += 1;
+    } else {
+      durations.push(request.durationSeconds);
+    }
   }
-  return total > 0 ? errors / total : null;
+
+  return {
+    errorRate: requestCount > 0 ? errors / requestCount : null,
+    p95Seconds: percentile(
+      durations.sort((a, b) => a - b),
+      0.95,
+    ),
+    requestCount,
+  };
+}
+
+/** Failed share of the requests seen in the last hour; null when there were none. */
+function errorRateOverLastHour(): number | null {
+  return getWindowedMetrics(ONE_HOUR_MS, Date.now()).errorRate;
 }
 
 const TIMELINE_HOURS = 24;
