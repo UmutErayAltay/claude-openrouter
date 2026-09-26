@@ -298,7 +298,7 @@ describe("GET /dashboard/api/metrics-summary", () => {
       const body = (await response.json()) as MetricsSummary;
       expect(body.models[0]?.model).toBe("openai/gpt-5");
       expect(body.models[0]?.total).toBe(2);
-      expect(body.totals).toEqual({ ok: 1, errors: 1, total: 2, successRate: 0.5 });
+      expect(body.totals).toEqual({ ok: 1, errors: 1, total: 2, successRate: 0.5, errorRate1h: 0.5 });
     } finally {
       resetMetrics();
     }

@@ -4,6 +4,8 @@ import { agentsDir } from "../agentTemplate.js";
 import {
   deleteAgent as deleteAgentImpl,
   listAgents as listAgentsImpl,
+  readAgent as readAgentImpl,
+  updateAgent as updateAgentImpl,
   AgentOpError,
   type AgentSummary,
 } from "../agentDiscovery.js";
@@ -12,9 +14,12 @@ import {
   configPath,
   findModel,
   keySource,
+  listConfigHistory,
   logPath,
   resolveOpenRouterKey,
+  restoreConfig,
   saveConfig as saveConfigImpl,
+  validateSettings,
   type Config,
   type ModelEntry,
 } from "../config.js";
@@ -23,7 +28,12 @@ import {
   revertModelPicker as revertModelPickerImpl,
   syncModelPicker as syncModelPickerImpl,
 } from "../claudeSettings.js";
-import { fetchCatalog, fetchEndpoints, searchCatalog } from "../openrouterCatalog.js";
+import {
+  fetchCatalog,
+  fetchEndpoints,
+  searchCatalog,
+  type CatalogModel,
+} from "../openrouterCatalog.js";
 import {
   addModel,
   ModelOpError,
@@ -32,8 +42,17 @@ import {
   validateModelEntry,
   type ModelInput,
 } from "../modelOps.js";
-import { testModel as testModelImpl, type TestModelResult } from "../modelTest.js";
-import { getMetricsSummary } from "../metrics.js";
+import {
+  compareModels as compareModelsImpl,
+  testModel as testModelImpl,
+  type TestModelResult,
+} from "../modelTest.js";
+import { checkBudget } from "../budget.js";
+import { getAlertState } from "../alerts.js";
+import {
+  getMetricsSummary,
+  getRecentRequests,
+} from "../metrics.js";
 import { tailLines } from "../logTail.js";
 import { spawnReplacementProxy } from "../proxyProcess.js";
 import {
@@ -157,6 +176,37 @@ async function getCachedCatalog(config: Config) {
   const models = await fetchCatalog(config);
   catalogCache = { at: now, baseUrl: config.openrouterBaseUrl, models };
   return models;
+}
+
+/**
+ * The per-million prices OpenRouter reports for a catalog entry, in the same
+ * unit fetchEndpoints uses, so the picker and the provider table can show one
+ * number for both. Read structurally because a catalog entry without pricing
+ * simply has none to report.
+ */
+function decorateCatalogModel(model: CatalogModel): CatalogModel & {
+  promptPrice: number;
+  completionPrice: number;
+  contextLength: number | undefined;
+} {
+  const pricing = (model as { pricing?: { prompt?: unknown; completion?: unknown } }).pricing ?? {};
+  const toPrice = (value: unknown): number => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed * 1e6 : 0;
+  };
+  return {
+    ...model,
+    promptPrice: toPrice(pricing.prompt),
+    completionPrice: toPrice(pricing.completion),
+    contextLength: model.contextLength,
+  };
+}
+
+/** Free means free on both sides: a free prompt billed on output isn't free. */
+function isFreeCatalogModel(
+  model: ReturnType<typeof decorateCatalogModel>,
+): boolean {
+  return model.promptPrice === 0 && model.completionPrice === 0;
 }
 
 export type CreditInfo =
@@ -355,6 +405,73 @@ export async function handleDashboard(
     return true;
   }
 
+  if (req.method === "GET" && path === "/dashboard/api/metrics-recent") {
+    const summary = getMetricsSummary();
+    sendJson(res, 200, {
+      recent: getRecentRequests(200),
+      errors: summary.recentErrors,
+      timeline: summary.timeline,
+      errorRate1h: summary.totals.errorRate1h,
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/alerts") {
+    sendJson(res, 200, getAlertState());
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/settings") {
+    sendJson(res, 200, { budget: config.budget, alerts: config.alerts });
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/settings") {
+    const body = await readJsonBody<Record<string, unknown>>(req);
+    let settings: ReturnType<typeof validateSettings>;
+    try {
+      settings = validateSettings(body ?? {});
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+      return true;
+    }
+    // A section left out of the payload keeps whatever is already stored,
+    // so saving just the budget doesn't silently clear the alerts.
+    if (settings.budget !== undefined) config.budget = settings.budget;
+    if (settings.alerts !== undefined) config.alerts = settings.alerts;
+    deps.saveConfig(config);
+    sendJson(res, 200, { budget: config.budget, alerts: config.alerts });
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/budget") {
+    sendJson(res, 200, checkBudget(config, deps.readUsage(), deps.now()));
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/config/history") {
+    sendJson(res, 200, { history: listConfigHistory() });
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/config/restore") {
+    const body = await readJsonBody<{ file?: string }>(req);
+    if (!body?.file) {
+      sendJson(res, 400, { error: "file zorunlu." });
+      return true;
+    }
+    try {
+      const restored = restoreConfig(body.file);
+      // `config` is the proxy's live object, held by reference everywhere
+      // else; assign into it instead of rebinding the parameter.
+      Object.assign(config, restored);
+      sendJson(res, 200, { restored: true, models: config.models.length });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return true;
+  }
+
   if (req.method === "GET" && path === "/dashboard/api/export") {
     const payload = JSON.stringify({ models: config.models }, null, 2);
     res.writeHead(200, {
@@ -417,6 +534,29 @@ export async function handleDashboard(
     return true;
   }
 
+  if (req.method === "POST" && path === "/dashboard/api/models/compare") {
+    const body = await readJsonBody<{ ids?: unknown; prompt?: unknown }>(req);
+    const ids = Array.isArray(body?.ids) ? (body.ids as unknown[]) : [];
+    if (ids.length < 2 || ids.length > 4) {
+      sendJson(res, 400, { error: "2 ile 4 arasinda model id gerekli." });
+      return true;
+    }
+    const unknown = ids.filter((id): id is string => typeof id !== "string" || !findModel(config, id));
+    if (unknown.length > 0) {
+      sendJson(res, 400, { error: `Bilinmeyen model id: ${unknown.map(String).join(", ")}` });
+      return true;
+    }
+
+    const entries = (ids as string[]).map((id) => findModel(config, id) as ModelEntry);
+    // testModel's own default prompt applies to an empty string, so an omitted
+    // prompt and a blank one mean the same thing here.
+    const prompt = typeof body?.prompt === "string" ? body.prompt : "";
+    sendJson(res, 200, {
+      results: await compareModelsImpl(config, entries, prompt, deps.recordUsage),
+    });
+    return true;
+  }
+
   if (req.method === "POST" && path === "/dashboard/api/models/remove") {
     const body = await readJsonBody<{ id?: string }>(req);
     if (!body?.id) {
@@ -437,13 +577,19 @@ export async function handleDashboard(
 
   if (req.method === "GET" && path === "/dashboard/api/catalog") {
     const q = url.searchParams.get("q") ?? "";
-    if (!q.trim()) {
+    const freeOnly = url.searchParams.get("free") === "1";
+    // With no query the browser is browsing the free tier, not searching: an
+    // empty list would tell them there is nothing to pick.
+    if (!q.trim() && !freeOnly) {
       sendJson(res, 200, { results: [] });
       return true;
     }
     try {
       const catalog = await getCachedCatalog(config);
-      sendJson(res, 200, { results: searchCatalog(catalog, q).slice(0, 30) });
+      const matched = q.trim() ? searchCatalog(catalog, q) : catalog;
+      const withPricing = matched.map((model) => decorateCatalogModel(model));
+      const results = freeOnly ? withPricing.filter(isFreeCatalogModel) : withPricing;
+      sendJson(res, 200, { results: results.slice(0, 30) });
     } catch (err) {
       sendJson(res, 502, { error: `Katalog alinamadi: ${(err as Error).message}` });
     }
@@ -498,6 +644,57 @@ export async function handleDashboard(
     try {
       deps.deleteAgent(body.file);
       sendJson(res, 200, { deleted: true });
+    } catch (err) {
+      sendJson(res, err instanceof AgentOpError ? 400 : 500, { error: (err as Error).message });
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && path === "/dashboard/api/agents/get") {
+    const file = url.searchParams.get("file");
+    if (!file) {
+      sendJson(res, 400, { error: "file gerekli." });
+      return true;
+    }
+    try {
+      const agent = readAgentImpl(file);
+      sendJson(res, 200, {
+        agent: {
+          file: agent.file,
+          ...agent.frontmatter,
+          body: agent.body,
+        },
+      });
+    } catch (err) {
+      sendJson(res, err instanceof AgentOpError ? 400 : 500, { error: (err as Error).message });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && path === "/dashboard/api/agents/update") {
+    const body = await readJsonBody<{
+      file?: string;
+      model?: string;
+      tools?: string;
+      permissionMode?: string;
+      description?: string;
+      body?: string;
+    }>(req);
+    if (!body?.file) {
+      sendJson(res, 400, { error: "file zorunlu." });
+      return true;
+    }
+    const patch = {
+      model: body.model,
+      tools: typeof body.tools === "string" ? body.tools.split(",") : undefined,
+      permissionMode: body.permissionMode,
+      description: body.description,
+      body: body.body,
+    };
+    try {
+      updateAgentImpl(body.file, patch);
+      const agent = deps.listAgents(config).find((entry) => entry.file === body.file);
+      sendJson(res, 200, { agent });
     } catch (err) {
       sendJson(res, err instanceof AgentOpError ? 400 : 500, { error: (err as Error).message });
     }

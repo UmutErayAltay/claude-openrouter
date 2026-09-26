@@ -5,7 +5,13 @@
  * already is).
  */
 
-export type RequestOutcome = "ok" | "upstream_error" | "network_error" | "no_key" | "stream_error";
+export type RequestOutcome =
+  | "ok"
+  | "upstream_error"
+  | "network_error"
+  | "no_key"
+  | "stream_error"
+  | "budget_blocked";
 
 /** Keyed by outcome so adding one to RequestOutcome without listing it here is a type error. */
 const OUTCOMES: Record<RequestOutcome, true> = {
@@ -14,7 +20,17 @@ const OUTCOMES: Record<RequestOutcome, true> = {
   network_error: true,
   no_key: true,
   stream_error: true,
+  budget_blocked: true,
 };
+
+/** One request, kept in memory so the dashboard can show what just went wrong. */
+export interface RecentRequest {
+  ts: number;
+  model: string;
+  outcome: RequestOutcome;
+  durationSeconds: number;
+  error?: string;
+}
 const OUTCOME_LIST = Object.keys(OUTCOMES) as RequestOutcome[];
 
 interface TokenTotals {
@@ -37,12 +53,20 @@ const durationBuckets = new Map<string, number[]>();
 const tokensByModel = new Map<string, TokenTotals>();
 const costByModel = new Map<string, number>();
 
+/** Bounded so a long-running proxy's recent-requests view can't grow without limit. */
+const RECENT_CAPACITY = 1000;
+const recentRequests: RecentRequest[] = [];
+
 export function recordRequest(params: {
   model: string;
   outcome: RequestOutcome;
   durationSeconds: number;
+  /** The failure text, so the dashboard can show why a request failed. */
+  error?: string;
+  /** Injectable so tests can place a request in the past. */
+  ts?: number;
 }): void {
-  const { model, outcome, durationSeconds } = params;
+  const { model, outcome, durationSeconds, error, ts } = params;
 
   const reqKey = model + KEY_SEP + outcome;
   requestsTotal.set(reqKey, (requestsTotal.get(reqKey) ?? 0) + 1);
@@ -60,6 +84,16 @@ export function recordRequest(params: {
       buckets[i] = (buckets[i] ?? 0) + 1;
     }
   }
+
+  const recent: RecentRequest = {
+    ts: ts ?? Date.now(),
+    model,
+    outcome,
+    durationSeconds,
+    ...(error ? { error } : {}),
+  };
+  recentRequests.push(recent);
+  if (recentRequests.length > RECENT_CAPACITY) recentRequests.shift();
 }
 
 /** Fed by the same recordUsage entry that goes to usage.jsonl. */
@@ -149,7 +183,25 @@ export interface ModelMetricsSummary {
 
 export interface MetricsSummary {
   models: ModelMetricsSummary[];
-  totals: { ok: number; errors: number; total: number; successRate: number | null };
+  totals: {
+    ok: number;
+    errors: number;
+    total: number;
+    successRate: number | null;
+    /** Failed share of the last hour, or null when nothing was requested in it. */
+    errorRate1h: number | null;
+  };
+  recentErrors: RecentRequest[];
+  timeline: TimelineBucket[];
+}
+
+export interface TimelineBucket {
+  model: string;
+  hourStart: number;
+  count: number;
+  errors: number;
+  p50Seconds: number | null;
+  p95Seconds: number | null;
 }
 
 /**
@@ -164,6 +216,11 @@ function quantileFromBuckets(buckets: number[], total: number, quantile: number)
     if ((buckets[i] ?? 0) >= target) return DURATION_BUCKETS[i] as number;
   }
   return DURATION_BUCKETS[DURATION_BUCKETS.length - 1] as number;
+}
+
+/** Newest first; the dashboard's live request table. */
+export function getRecentRequests(limit = RECENT_CAPACITY): RecentRequest[] {
+  return recentRequests.slice(-limit).reverse();
 }
 
 /** JSON view of the same counters renderMetrics exposes, for the dashboard. */
@@ -198,8 +255,83 @@ export function getMetricsSummary(): MetricsSummary {
 
   return {
     models: summaries,
-    totals: { ok, errors: total - ok, total, successRate: total > 0 ? ok / total : null },
+    totals: {
+      ok,
+      errors: total - ok,
+      total,
+      successRate: total > 0 ? ok / total : null,
+      errorRate1h: errorRateOverLastHour(),
+    },
+    recentErrors: recentRequests
+      .filter((request) => request.outcome !== "ok")
+      .slice(-50)
+      .reverse(),
+    timeline: buildTimeline(),
   };
+}
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+/** Failed share of the requests seen in the last hour; null when there were none. */
+function errorRateOverLastHour(): number | null {
+  const cutoff = Date.now() - ONE_HOUR_MS;
+  let total = 0;
+  let errors = 0;
+  for (const request of recentRequests) {
+    if (request.ts < cutoff) continue;
+    total += 1;
+    if (request.outcome !== "ok") errors += 1;
+  }
+  return total > 0 ? errors / total : null;
+}
+
+const TIMELINE_HOURS = 24;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Exact percentiles off the recorded durations, unlike the summary's bucket estimate. */
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  return sorted[Math.max(1, Math.ceil(p * sorted.length)) - 1] as number;
+}
+
+function buildTimeline(): TimelineBucket[] {
+  const cutoff = Date.now() - TIMELINE_HOURS * HOUR_MS;
+  interface Accumulator {
+    model: string;
+    hourStart: number;
+    count: number;
+    errors: number;
+    durations: number[];
+  }
+  const buckets = new Map<string, Accumulator>();
+
+  for (const request of recentRequests) {
+    if (request.ts < cutoff) continue;
+    const hourStart = Math.floor(request.ts / HOUR_MS) * HOUR_MS;
+    const key = request.model + KEY_SEP + hourStart;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { model: request.model, hourStart, count: 0, errors: 0, durations: [] };
+      buckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    if (request.outcome !== "ok") bucket.errors += 1;
+    bucket.durations.push(request.durationSeconds);
+  }
+
+  return [...buckets.values()]
+    .sort((a, b) => a.hourStart - b.hourStart || a.model.localeCompare(b.model))
+    .map((bucket) => {
+      const durations = [...bucket.durations].sort((a, b) => a - b);
+      return {
+        model: bucket.model,
+        hourStart: bucket.hourStart,
+        count: bucket.count,
+        errors: bucket.errors,
+        p50Seconds: percentile(durations, 0.5),
+        p95Seconds: percentile(durations, 0.95),
+      };
+    });
 }
 
 /** Test-only: clears every counter so one test's numbers don't bleed into the next. */
@@ -210,4 +342,5 @@ export function resetMetrics(): void {
   durationBuckets.clear();
   tokensByModel.clear();
   costByModel.clear();
+  recentRequests.length = 0;
 }

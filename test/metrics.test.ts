@@ -109,7 +109,7 @@ describe("getMetricsSummary", () => {
     const summary = getMetricsSummary();
 
     expect(summary.models).toEqual([]);
-    expect(summary.totals).toEqual({ ok: 0, errors: 0, total: 0, successRate: null });
+    expect(summary.totals).toEqual({ ok: 0, errors: 0, total: 0, successRate: null, errorRate1h: null });
     expect(Number.isNaN(summary.totals.successRate)).toBe(false);
   });
 
@@ -128,6 +128,7 @@ describe("getMetricsSummary", () => {
       network_error: 0,
       no_key: 1,
       stream_error: 0,
+      budget_blocked: 0,
     });
     expect(summary.models[0]?.total).toBe(5);
     expect(summary.totals).toMatchObject({ ok: 3, errors: 2, total: 5, successRate: 0.6 });
@@ -173,7 +174,9 @@ describe("getMetricsSummary", () => {
 
     expect(getMetricsSummary()).toEqual({
       models: [],
-      totals: { ok: 0, errors: 0, total: 0, successRate: null },
+      totals: { ok: 0, errors: 0, total: 0, successRate: null, errorRate1h: null },
+      recentErrors: [],
+      timeline: [],
     });
   });
 });

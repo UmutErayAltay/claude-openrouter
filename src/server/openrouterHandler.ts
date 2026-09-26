@@ -31,6 +31,8 @@ export interface OpenRouterHandlerOptions {
   markNonStreaming?: (modelId: string) => boolean;
   /** Overridable so tests don't write to the real usage log. */
   recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+  /** Reports the message sent to Claude Code on a failure, for the error log. */
+  onError?: (message: string) => void;
 }
 
 /** Maps an OpenRouter usage object to the shape the dashboard's log stores. */
@@ -59,14 +61,10 @@ export async function handleOpenRouter(
 ): Promise<RequestOutcome> {
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
-    sendJson(
-      res,
-      401,
-      anthropicError(
-        401,
-        "OpenRouter anahtari yok. `cor key <anahtar>` calistir veya OPENROUTER_API_KEY ayarla.",
-      ),
-    );
+    const message =
+      "OpenRouter anahtari yok. `cor key <anahtar>` calistir veya OPENROUTER_API_KEY ayarla.";
+    sendJson(res, 401, anthropicError(401, message));
+    options.onError?.(message);
     return "no_key";
   }
 
@@ -86,17 +84,17 @@ export async function handleOpenRouter(
       signal: AbortSignal.timeout(30 * 60 * 1000),
     });
   } catch (err) {
-    sendJson(
-      res,
-      502,
-      anthropicError(502, `OpenRouter'a ulasilamadi: ${(err as Error).message}`),
-    );
+    const message = `OpenRouter'a ulasilamadi: ${(err as Error).message}`;
+    sendJson(res, 502, anthropicError(502, message));
+    options.onError?.(message);
     return "network_error";
   }
 
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
-    sendJson(res, upstream.status, openRouterErrorToAnthropic(upstream.status, text));
+    const body = openRouterErrorToAnthropic(upstream.status, text);
+    sendJson(res, upstream.status, body);
+    options.onError?.(body.error.message);
     return "upstream_error";
   }
 
@@ -110,12 +108,15 @@ export async function handleOpenRouter(
       log: options.log ?? (() => {}),
       markNonStreaming: options.markNonStreaming ?? markModelNonStreaming,
       recordUsage: record,
+      onError: options.onError ?? (() => {}),
     });
   }
 
   const raw = (await upstream.json().catch(() => ({}))) as OpenAIResponse;
   if (raw.error) {
-    sendJson(res, 502, anthropicError(502, `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`));
+    const message = `OpenRouter: ${raw.error.message ?? "bilinmeyen hata"}`;
+    sendJson(res, 502, anthropicError(502, message));
+    options.onError?.(message);
     return "upstream_error";
   }
 
@@ -155,6 +156,7 @@ interface StreamContext {
   log: (message: string) => void;
   markNonStreaming: (modelId: string) => boolean;
   recordUsage: (entry: Omit<UsageRecord, "ts">) => void;
+  onError: (message: string) => void;
 }
 
 async function streamResponse(
@@ -184,6 +186,7 @@ async function streamResponse(
   try {
     if (!upstream.body) {
       for (const event of translator.finish()) res.write(event);
+      context.onError("OpenRouter akis govdesi gondermedi.");
       return "stream_error";
     }
 
@@ -206,9 +209,9 @@ async function streamResponse(
 
         if (chunk.error) {
           // Mid-stream failures reach Claude Code as an SSE error event.
-          res.write(
-            sseEvent("error", anthropicError(500, `OpenRouter: ${chunk.error.message ?? "hata"}`)),
-          );
+          const message = `OpenRouter: ${chunk.error.message ?? "hata"}`;
+          res.write(sseEvent("error", anthropicError(500, message)));
+          context.onError(message);
           return "stream_error";
         }
 
@@ -275,9 +278,11 @@ async function streamResponse(
     context.recordUsage(toUsageEntry(context.modelId, translator.lastUsage, true));
     return "ok";
   } catch (err) {
+    const message = `Akis kesildi: ${(err as Error).message}`;
     if (!res.writableEnded) {
-      res.write(sseEvent("error", anthropicError(500, `Akis kesildi: ${(err as Error).message}`)));
+      res.write(sseEvent("error", anthropicError(500, message)));
     }
+    context.onError(message);
     return "stream_error";
   } finally {
     clearInterval(ping);

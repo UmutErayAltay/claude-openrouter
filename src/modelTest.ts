@@ -17,11 +17,7 @@ export type TestModelResult =
     }
   | { ok: false; error: string };
 
-const TEST_REQUEST: AnthropicRequest = {
-  model: "",
-  max_tokens: 60,
-  messages: [{ role: "user", content: "Say hello in one short sentence." }],
-};
+const DEFAULT_TEST_PROMPT = "Say hello in one short sentence.";
 
 /**
  * Sends one small real request through a configured model, for the
@@ -33,13 +29,19 @@ export async function testModel(
   config: Config,
   entry: ModelEntry,
   recordUsage: (record: Omit<UsageRecord, "ts">) => void,
+  prompt: string = DEFAULT_TEST_PROMPT,
 ): Promise<TestModelResult> {
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
     return { ok: false, error: "OpenRouter anahtari yok. `cor key <anahtar>` calistir." };
   }
 
-  const payload = anthropicToOpenAI({ ...TEST_REQUEST, model: entry.id }, entry);
+  const request: AnthropicRequest = {
+    model: entry.id,
+    max_tokens: 60,
+    messages: [{ role: "user", content: prompt }],
+  };
+  const payload = anthropicToOpenAI(request, entry);
   // The test always waits for a single complete answer, regardless of the
   // model's own stream setting — there is no SSE consumer here to feed.
   payload.stream = undefined;
@@ -89,4 +91,24 @@ export async function testModel(
     completionTokens: raw.usage?.completion_tokens ?? 0,
     cost: raw.usage?.cost ?? null,
   };
+}
+
+/**
+ * Asks several models the same question at once, for the dashboard's
+ * side-by-side compare. Parallel because they are independent billable calls:
+ * serializing them would make a four-model comparison take the sum of the
+ * slowest latencies instead of the slowest one.
+ */
+export async function compareModels(
+  config: Config,
+  entries: ModelEntry[],
+  prompt: string,
+  recordUsage: (record: Omit<UsageRecord, "ts">) => void,
+): Promise<Array<{ model: string; result: TestModelResult }>> {
+  return Promise.all(
+    entries.map(async (entry) => ({
+      model: entry.id,
+      result: await testModel(config, entry, recordUsage, prompt),
+    })),
+  );
 }

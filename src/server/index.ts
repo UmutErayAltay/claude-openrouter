@@ -8,8 +8,10 @@ import { routeFor } from "../router.js";
 import { passthroughToAnthropic } from "./anthropicPassthrough.js";
 import { handleOpenRouter } from "./openrouterHandler.js";
 import { forwardableHeaders, readBody, sendJson } from "./http.js";
-import { recordUsage as recordUsageToLog, type UsageRecord } from "../usageLog.js";
-import { recordRequest, recordUsageMetrics, renderMetrics } from "../metrics.js";
+import { recordUsage as recordUsageToLog, readUsage as readUsageToLog, type UsageRecord } from "../usageLog.js";
+import { recordRequest, recordUsageMetrics, renderMetrics, getMetricsSummary } from "../metrics.js";
+import { checkBudget } from "../budget.js";
+import { evaluateAlerts } from "../alerts.js";
 import { defaultDashboardDeps, handleDashboard, type DashboardDeps } from "./dashboardApi.js";
 import { buildDashboardHtml } from "./dashboardPage.js";
 
@@ -21,6 +23,8 @@ export interface ProxyOptions {
   markNonStreaming?: (modelId: string) => boolean;
   /** Overridable so tests don't write to the real usage log. */
   recordUsage?: (entry: Omit<UsageRecord, "ts">) => void;
+  /** Overridable so tests don't read the real usage log (the budget gate does). */
+  readUsage?: () => UsageRecord[];
   /** Overridable so tests don't touch the real Claude settings/agent files. */
   dashboard?: Partial<DashboardDeps>;
 }
@@ -30,6 +34,7 @@ interface HandleContext {
   log: (message: string) => void;
   markNonStreaming?: (modelId: string) => boolean;
   recordUsage: (entry: Omit<UsageRecord, "ts">) => void;
+  readUsage: () => UsageRecord[];
   dashboardDeps: DashboardDeps;
 }
 
@@ -46,6 +51,7 @@ export function createProxyServer(options: ProxyOptions = {}): Server {
       recordUsageToBase(entry);
       recordUsageMetrics(entry);
     },
+    readUsage: options.readUsage ?? readUsageToLog,
     dashboardDeps: { ...defaultDashboardDeps(), ...options.dashboard },
   };
 
@@ -63,7 +69,7 @@ export function createProxyServer(options: ProxyOptions = {}): Server {
 
 async function handle(req: IncomingMessage, res: ServerResponse, context: HandleContext): Promise<void> {
   const path = (req.url ?? "/").split("?")[0] ?? "/";
-  const { load, log, markNonStreaming, recordUsage } = context;
+  const { load, log, markNonStreaming, recordUsage, readUsage } = context;
 
   // Claude Code's connection-warming probe.
   if (req.method === "HEAD" && path === "/api/hello") {
@@ -124,18 +130,69 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
     return;
   }
 
+  if (config.budget?.action === "block") {
+    const usage = readUsage();
+    if (checkBudget(config, usage, Date.now()).exceeded && !isKnownFreeModel(usage, route.entry.id)) {
+      log(`butce asildi, ${route.entry.id} engellendi`);
+      sendJson(res, 402, {
+        type: "error",
+        error: {
+          type: "billing_error",
+          message:
+            "cor: butce asildi. Ucretli modeller icin istekler durduruldu " +
+            "(config.budget.dailyUsd / monthlyUsd). Kapami yukselt veya butceyi sifirla.",
+        },
+      });
+      recordRequest({
+        model: route.entry.id,
+        outcome: "budget_blocked",
+        durationSeconds: 0,
+        error: "cor: butce asildi",
+      });
+      return;
+    }
+  }
+
   log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
   const startedAt = Date.now();
+  // The proxy only learns why a request failed once it's already been answered,
+  // so the handler reports the text it sent and it lands in the recent-errors list.
+  let errorMessage: string | undefined;
   const outcome = await handleOpenRouter(config, route.entry, request, res, {
     log,
     markNonStreaming,
     recordUsage,
+    onError: (message) => {
+      errorMessage = message;
+    },
   });
   recordRequest({
     model: route.entry.id,
     outcome,
     durationSeconds: (Date.now() - startedAt) / 1000,
+    error: errorMessage,
   });
+
+  void evaluateAlerts(config, getMetricsSummary(), Date.now()).catch((err: unknown) => {
+    context.log(`alarm hatasi: ${(err as Error).message}`);
+  });
+}
+
+/**
+ * 402 unless the model is one we've only ever seen billed at $0. Costs are
+ * only known after a request has been made, so a model with no usage record
+ * yet is treated as paid and blocked — otherwise the cap could be evaded by
+ * simply being the first model asked for after it was hit.
+ */
+function isKnownFreeModel(usage: UsageRecord[], model: string): boolean {
+  let records = 0;
+  let cost = 0;
+  for (const record of usage) {
+    if (record.model !== model) continue;
+    records += 1;
+    cost += record.cost ?? 0;
+  }
+  return records > 0 && cost === 0;
 }
 
 /**
