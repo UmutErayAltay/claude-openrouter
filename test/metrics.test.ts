@@ -342,7 +342,20 @@ describe("recentErrors", () => {
 });
 
 describe("timeline", () => {
-  const HOUR_START = Math.floor(new Date("2026-09-26T12:00:00Z").getTime() / HOUR_MS) * HOUR_MS;
+  // buildTimeline() drops anything older than 24h off Date.now(), so the clock
+  // is pinned here for the same reason as in errorRate1h below: a hardcoded
+  // instant drifts out of the window once real time passes it by a day.
+  const NOW = new Date("2026-09-26T12:00:00Z").getTime();
+  const HOUR_START = Math.floor(NOW / HOUR_MS) * HOUR_MS;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("buckets by model and hour, counting requests and failures", () => {
     recordRequest({ model: "x", outcome: "ok", durationSeconds: 1, ts: HOUR_START + 10_000 });
