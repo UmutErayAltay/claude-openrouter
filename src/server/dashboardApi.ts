@@ -13,6 +13,7 @@ import { writeAgent as writeAgentImpl } from "../agentTemplate.js";
 import {
   configPath,
   findModel,
+  isFreeTierModelId,
   keySource,
   listConfigHistory,
   logPath,
@@ -60,6 +61,7 @@ import { tailLines } from "../logTail.js";
 import { spawnReplacementProxy } from "../proxyProcess.js";
 import {
   aggregateUsage,
+  countFreeTierUsage,
   recordUsage as recordUsageImpl,
   readUsage as readUsageImpl,
   type UsageRecord,
@@ -403,6 +405,23 @@ export async function handleDashboard(
             "UTC 00:00'da sifirlanir. fallbackModel tanimli modeller otomatik gecer."
           : undefined,
       },
+      ...(() => {
+        const usage = countFreeTierUsage(
+          deps.readUsage(),
+          (modelId) => isFreeTierModelId(config, modelId),
+          deps.now(),
+        );
+        const ok = usage.day.count < usage.day.limit && usage.minute.count < usage.minute.limit;
+        return [
+          {
+            id: "free_quota_count",
+            // Sayı her zaman etikette gorunur (hint yalnizca !ok iken gosteriliyor).
+            label: `Ucretsiz model kullanimi (bunny haric): ${usage.day.count}/${usage.day.limit} bugun, ${usage.minute.count}/${usage.minute.limit} dakika`,
+            ok,
+            hint: ok ? undefined : "Kota doluyor; bunny/stealth modele veya baska bir modele gecmeyi dusun.",
+          },
+        ];
+      })(),
       ...driftChecks,
     ];
     sendJson(res, 200, { checks });

@@ -122,6 +122,51 @@ export function readUsage(): UsageRecord[] {
   return records;
 }
 
+/** OpenRouter's account-wide caps for the `:free` tier (bunny is not on it). */
+export const FREE_TIER_DAILY_LIMIT = 1000;
+export const FREE_TIER_MINUTE_LIMIT = 20;
+
+export interface FreeTierUsageCounts {
+  day: { count: number; limit: number };
+  minute: { count: number; limit: number };
+}
+
+/** Start of the current UTC day — OpenRouter resets the daily cap at UTC 00:00. */
+function utcDayStart(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/**
+ * Counts requests already spent against OpenRouter's shared `:free`-tier
+ * quota, so the dashboard/CLI can show "N/1000 today, M/20 this minute"
+ * instead of only reacting after OpenRouter rejects one (see quotaGuard.ts).
+ * `isFreeTierModelId` decides which records count — pass config.isFreeTierModelId
+ * bound to the live config so a model like stealth/space-bunny-alpha (free
+ * right now, but not on OpenRouter's `:free` tier) is excluded.
+ */
+export function countFreeTierUsage(
+  records: UsageRecord[],
+  isFreeTierModelId: (modelId: string) => boolean,
+  now: number = Date.now(),
+): FreeTierUsageCounts {
+  const dayStart = utcDayStart(now);
+  const minuteStart = now - 60_000;
+
+  let dayCount = 0;
+  let minuteCount = 0;
+  for (const record of records) {
+    if (!isFreeTierModelId(record.model)) continue;
+    if (record.ts >= dayStart) dayCount += 1;
+    if (record.ts >= minuteStart) minuteCount += 1;
+  }
+
+  return {
+    day: { count: dayCount, limit: FREE_TIER_DAILY_LIMIT },
+    minute: { count: minuteCount, limit: FREE_TIER_MINUTE_LIMIT },
+  };
+}
+
 function dayKey(ts: number): string {
   const date = new Date(ts);
   const year = date.getFullYear();

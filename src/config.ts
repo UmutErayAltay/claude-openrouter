@@ -538,6 +538,18 @@ export function findModel(config: Config, modelId: string): ModelEntry | undefin
 }
 
 /**
+ * True for OpenRouter's account-wide `:free` tier, which shares one daily and
+ * one per-minute quota across every model on it. wasFree is set going forward
+ * (see modelOps.autofillFromCatalog), but a model added before that existed
+ * has no such flag; the ":free" suffix is OpenRouter's own convention and
+ * catches those too. A model with neither (e.g. a stealth model that happens
+ * to be free right now, like stealth/space-bunny-alpha) is not on this tier.
+ */
+export function isFreeTierModelId(config: Config, modelId: string): boolean {
+  return Boolean(findModel(config, modelId)?.wasFree) || modelId.endsWith(":free");
+}
+
+/**
  * Records that a model can't produce native tool calls while streaming, so
  * later requests go out without upstream streaming. Returns false when the
  * model is already marked or isn't configured.

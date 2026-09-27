@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { aggregateUsage, readUsage, recordUsage, usageLogPath } from "../src/usageLog.js";
+import {
+  aggregateUsage,
+  countFreeTierUsage,
+  readUsage,
+  recordUsage,
+  usageLogPath,
+} from "../src/usageLog.js";
 
 let dir: string;
 const originalDir = process.env.CLAUDE_OPENROUTER_DIR;
@@ -176,5 +182,47 @@ describe("aggregateUsage", () => {
     const summary = aggregateUsage(records, { now });
     expect(summary.totals.cachedTokens).toBe(60);
     expect(summary.byModel[0]).toMatchObject({ model: "a", cachedTokens: 60 });
+  });
+});
+
+describe("countFreeTierUsage", () => {
+  const isFree = (modelId: string) => modelId.endsWith(":free");
+  const now = new Date("2026-09-28T12:00:00Z").getTime();
+
+  it("counts only free-tier records within today's UTC day", () => {
+    const records = [
+      { ts: now, model: "nvidia/nemotron:free", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+      { ts: now, model: "stealth/space-bunny-alpha", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+      {
+        ts: now - 25 * 60 * 60 * 1000, // yesterday, should not count
+        model: "nvidia/nemotron:free",
+        promptTokens: 1,
+        completionTokens: 1,
+        cost: 0,
+        stream: false,
+      },
+    ];
+
+    const usage = countFreeTierUsage(records, isFree, now);
+    expect(usage.day).toEqual({ count: 1, limit: 1000 });
+  });
+
+  it("counts only free-tier records within the trailing 60 seconds for the minute window", () => {
+    const records = [
+      { ts: now, model: "a:free", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+      { ts: now - 30_000, model: "b:free", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+      { ts: now - 90_000, model: "c:free", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+      { ts: now, model: "stealth/space-bunny-alpha", promptTokens: 1, completionTokens: 1, cost: 0, stream: false },
+    ];
+
+    const usage = countFreeTierUsage(records, isFree, now);
+    expect(usage.minute).toEqual({ count: 2, limit: 20 });
+  });
+
+  it("returns zero counts for an empty log", () => {
+    expect(countFreeTierUsage([], isFree, now)).toEqual({
+      day: { count: 0, limit: 1000 },
+      minute: { count: 0, limit: 20 },
+    });
   });
 });

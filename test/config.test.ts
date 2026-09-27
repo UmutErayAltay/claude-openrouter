@@ -9,6 +9,7 @@ import {
   QUANTIZATIONS,
   configPath,
   findModel,
+  isFreeTierModelId,
   keyPath,
   keySource,
   listConfigHistory,
@@ -201,6 +202,29 @@ describe("findModel", () => {
     const config = { ...DEFAULT_CONFIG, models: [{ id: "openai/gpt-5" }] };
     expect(findModel(config, "openai/gpt-5")).toEqual({ id: "openai/gpt-5" });
     expect(findModel(config, "openai/gpt-4o")).toBeUndefined();
+  });
+});
+
+describe("isFreeTierModelId", () => {
+  it("matches an id ending in :free even without wasFree set", () => {
+    const config = { ...DEFAULT_CONFIG, models: [{ id: "nvidia/nemotron-3-ultra-550b-a55b:free" }] };
+    expect(isFreeTierModelId(config, "nvidia/nemotron-3-ultra-550b-a55b:free")).toBe(true);
+  });
+
+  it("matches a configured model flagged wasFree even without the suffix", () => {
+    const config = { ...DEFAULT_CONFIG, models: [{ id: "x", wasFree: true }] };
+    expect(isFreeTierModelId(config, "x")).toBe(true);
+  });
+
+  it("does not match a stealth model that is merely free right now (e.g. bunny)", () => {
+    const config = { ...DEFAULT_CONFIG, models: [{ id: "stealth/space-bunny-alpha" }] };
+    expect(isFreeTierModelId(config, "stealth/space-bunny-alpha")).toBe(false);
+  });
+
+  it("falls back to the :free suffix for an id absent from config", () => {
+    const config = { ...DEFAULT_CONFIG, models: [] };
+    expect(isFreeTierModelId(config, "some/model:free")).toBe(true);
+    expect(isFreeTierModelId(config, "some/model")).toBe(false);
   });
 });
 
