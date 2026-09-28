@@ -254,6 +254,10 @@ export function buildDashboardHtml(): string {
       <tbody id="agentsBody"><tr class="empty-row"><td colspan="8">yukleniyor...</td></tr></tbody>
     </table>
     </div>
+    <div class="hint" id="agentsMoreHint"></div>
+    <div class="form-actions" id="agentsToggleRow" style="display:none">
+      <button id="agentsMoreBtn" class="btn btn-secondary btn-small" type="button" aria-expanded="false">Daha fazla goster</button>
+    </div>
     <div class="hidden" id="agentFormPanel">
     <form id="agentForm" class="agent-form">
       <label>Ad

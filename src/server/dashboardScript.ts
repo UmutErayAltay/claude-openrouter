@@ -14,9 +14,11 @@ export const DASHBOARD_JS = `
 
   var SVG_NS = "http://www.w3.org/2000/svg";
   var HOUR_MS_TOTAL = 60 * 60 * 1000;
+  var AGENTS_COLLAPSED = 5;
   var lastMetrics = null;
   var lastRecent = null;
   var currentAgents = null;
+  var agentsExpanded = false;
 
   function qs(id) { return document.getElementById(id); }
 
@@ -1481,7 +1483,26 @@ export const DASHBOARD_JS = `
     currentAgents = payload;
 
     var stats = modelStats24h();
-    var rows = payload.agents.map(function (agent) {
+    // Uzun ajan listesi tek sayfayi asiriyordu: varsayilan olarak ilk
+    // AGENTS_COLLAPSED kadarini goster, gerisini buton acsin.
+    var agents = payload.agents;
+    var expanded = agentsExpanded || agents.length <= AGENTS_COLLAPSED;
+    var hiddenCount = agents.length - AGENTS_COLLAPSED;
+
+    var toggleRow = qs("agentsToggleRow");
+    if (hiddenCount > 0) {
+      toggleRow.style.display = "flex";
+      var moreBtn = qs("agentsMoreBtn");
+      moreBtn.textContent = expanded ? "Daha az goster" : "Daha fazla goster (" + hiddenCount + ")";
+      moreBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    } else {
+      toggleRow.style.display = "none";
+    }
+    qs("agentsMoreHint").textContent = hiddenCount > 0 && !expanded
+      ? hiddenCount + " ajan gizli."
+      : "";
+
+    var rows = (expanded ? agents : agents.slice(0, AGENTS_COLLAPSED)).map(function (agent) {
       var tr = document.createElement("tr");
       tr.appendChild(td(agent.name));
       tr.appendChild(td(agent.scope === "user" ? "kullanici" : "proje"));
@@ -2132,6 +2153,11 @@ export const DASHBOARD_JS = `
     qs("newAgentBtn").addEventListener("click", function () {
       qs("agentFormPanel").classList.remove("hidden");
       qs("aName").focus();
+    });
+
+    qs("agentsMoreBtn").addEventListener("click", function () {
+      agentsExpanded = !agentsExpanded;
+      if (currentAgents) renderAgents(currentAgents);
     });
 
     qs("agentFormCancel").addEventListener("click", function () { hideAgentForm(); });
