@@ -67,7 +67,6 @@ export async function testModel(
         "x-title": "claude-openrouter",
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(60_000),
     });
   } catch (err) {
     return { ok: false, error: `OpenRouter'a ulasilamadi: ${(err as Error).message}` };
