@@ -610,8 +610,7 @@ export async function handleDashboard(
     }
 
     const entries = (ids as string[]).map((id) => findModel(config, id) as ModelEntry);
-    // testModel's own default prompt applies to an empty string, so an omitted
-    // prompt and a blank one mean the same thing here.
+    // Bos/atlama prompt testModel'in varsayilanina duser (orada dusecek).
     const prompt = typeof body?.prompt === "string" ? body.prompt : "";
     sendJson(res, 200, {
       results: await compareModelsImpl(config, entries, prompt, deps.recordUsage),

@@ -82,6 +82,44 @@ describe("testModel", () => {
     if (result.ok) expect(result.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("falls back to the default prompt when given a blank one", async () => {
+    // JS varsayilan parametresi yalnizca `undefined` icin gecerli; dashboard
+    // bos metni acikca gonderiyordu ve OpenRouter 400 donuyordu.
+    const result = await testModel(config(), { id: "openai/gpt-5" }, (e) => recorded.push(e), "   ");
+
+    const sent = JSON.parse(lastRequestBody) as { messages: { content: string }[] };
+    expect(sent.messages[0]?.content).toBe("Say hello in one short sentence.");
+    expect(result.ok).toBe(true);
+  });
+
+  it("asks for enough max_tokens that a reasoning model can still answer", async () => {
+    // 60'a sabitlenmistik; reasoning modelleri (deepseek high, nemotron max)
+    // butceyi tamamen icsel dusunmeye harciyor ve `ok: true` + bos metin
+    // donuyordu. Compare tablosunda yesil ama bos satir gorunuyordu.
+    await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
+
+    const sent = JSON.parse(lastRequestBody) as { max_tokens?: number };
+    expect(sent.max_tokens).toBe(1024);
+  });
+
+  it("fails instead of reporting ok when the model returns an empty answer", async () => {
+    // Dusenme butcesi bitmis bir model HTTP 200 doner ama metin bos kalir.
+    // Bunu basari diye gostermek dashboard'da yaniltici yesil bir satir olur.
+    respond = () => ({
+      status: 200,
+      body: {
+        id: "gen-1",
+        choices: [{ message: { content: "" }, finish_reason: "length" }],
+        usage: { prompt_tokens: 12, completion_tokens: 60, cost: 0 },
+      },
+    });
+
+    const result = await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("60");
+  });
+
   it("records the call in the usage log like a real request", async () => {
     await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
 

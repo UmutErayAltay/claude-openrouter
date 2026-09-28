@@ -19,6 +19,13 @@ export type TestModelResult =
 
 const DEFAULT_TEST_PROMPT = "Say hello in one short sentence.";
 
+// Reasoning modelleri (deepseek `reasoning: "high"`, nemotron `"max"`) icsel
+// düşünme token'larini da bu bütçeden yer. 60'ta tamamı düşünmeye gidiyor ve
+// model `ok: true` + bos metin donuyor — kullanici tabloya "calisiyor" yaziyor,
+// oysa cevap hic gelmemis oluyor. 1024 tek kelimelik bir cevap icin fazlalik
+// ama duşunmeye yer birakiyor. #106
+const TEST_MAX_TOKENS = 1024;
+
 /**
  * Sends one small real request through a configured model, for the
  * dashboard's "test this model" button. This is a genuine billable call
@@ -29,8 +36,12 @@ export async function testModel(
   config: Config,
   entry: ModelEntry,
   recordUsage: (record: Omit<UsageRecord, "ts">) => void,
-  prompt: string = DEFAULT_TEST_PROMPT,
+  prompt?: string,
 ): Promise<TestModelResult> {
+  // Varsayılan parametre yalnizca `undefined` icin gecerli; dashboard bos
+  // metni acikca gonderiyor ve OpenRouter "Input must have at least 1 token"
+  // ile 400 donuyordu. Bosluk kirpilip bos kaliyorsa varsayilana dusulur.
+  const question = prompt?.trim() ? prompt : DEFAULT_TEST_PROMPT;
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
     return { ok: false, error: "OpenRouter anahtari yok. `cor key <anahtar>` calistir." };
@@ -38,8 +49,8 @@ export async function testModel(
 
   const request: AnthropicRequest = {
     model: entry.id,
-    max_tokens: 60,
-    messages: [{ role: "user", content: prompt }],
+    max_tokens: TEST_MAX_TOKENS,
+    messages: [{ role: "user", content: question }],
   };
   const payload = anthropicToOpenAI(request, entry);
   // The test always waits for a single complete answer, regardless of the
@@ -82,10 +93,24 @@ export async function testModel(
   const textBlock = anthropic.content.find(
     (block): block is { type: "text"; text: string } => block.type === "text",
   );
+  const text = textBlock?.text ?? "";
+
+  // HTTP 200 olmus olabilir ama cevap bos olabilir (dusunme butcesi yendi,
+  // model hic sey yazmadan durdu). Bunu "calisiyor" diye gostermek dashboard'da
+  // yesil ama bos bir satir olurdu; gercek bir basarisizlik daha dogru.
+  if (text.trim() === "") {
+    const spent = raw.usage?.completion_tokens ?? 0;
+    return {
+      ok: false,
+      error:
+        `Model yanit dondurmedi (${spent} cikti tokeni, bos metin). ` +
+        "Reasoning ayarini dusur (ornegin --reasoning none) veya tekrar dene.",
+    };
+  }
 
   return {
     ok: true,
-    text: textBlock?.text ?? "",
+    text,
     latencyMs,
     promptTokens: raw.usage?.prompt_tokens ?? 0,
     completionTokens: raw.usage?.completion_tokens ?? 0,
