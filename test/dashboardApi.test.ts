@@ -413,6 +413,41 @@ describe("GET /dashboard/api/usage", () => {
     expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
     expect((body.daily as unknown[]).length).toBe(3);
   });
+
+  it("excludes stealth/promo models (bunny) from the default view", async () => {
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 0.02, stream: true },
+      {
+        ts: fakeNow,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 10,
+        completionTokens: 5,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson("/dashboard/api/usage?days=3&recent=5");
+    expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
+  });
+
+  it("still shows a stealth/promo model when it is explicitly requested", async () => {
+    fakeUsage = [
+      {
+        ts: fakeNow,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 10,
+        completionTokens: 5,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson(
+      "/dashboard/api/usage?days=3&recent=5&model=stealth/space-bunny-alpha",
+    );
+    expect(body).toMatchObject({ totals: { requests: 1 } });
+  });
 });
 
 describe("GET /dashboard/api/metrics-summary", () => {

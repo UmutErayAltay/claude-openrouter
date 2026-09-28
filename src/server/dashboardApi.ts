@@ -14,6 +14,7 @@ import {
   configPath,
   findModel,
   isFreeTierModelId,
+  isStealthPromoModelId,
   keySource,
   listConfigHistory,
   logPath,
@@ -438,7 +439,13 @@ export async function handleDashboard(
     const days = Number(url.searchParams.get("days") ?? "14") || 14;
     const recent = Number(url.searchParams.get("recent") ?? "20") || 20;
     const model = url.searchParams.get("model") ?? undefined;
-    sendJson(res, 200, aggregateUsage(deps.readUsage(), { days, recent, model, now: deps.now() }));
+    // Stealth/promo models (bunny) are free and used constantly; left in,
+    // they'd drown out the request/cost numbers this view exists to track.
+    // A model filter asking for one specifically still shows it.
+    const records = model
+      ? deps.readUsage()
+      : deps.readUsage().filter((record) => !isStealthPromoModelId(record.model));
+    sendJson(res, 200, aggregateUsage(records, { days, recent, model, now: deps.now() }));
     return true;
   }
 

@@ -550,6 +550,19 @@ export function isFreeTierModelId(config: Config, modelId: string): boolean {
 }
 
 /**
+ * True for an OpenRouter stealth/promo model (e.g. stealth/space-bunny-alpha,
+ * the "bunny" agents' model) — free while the promotion lasts, but unlimited
+ * and not on the shared `:free`-tier quota. `stealth/` is OpenRouter's own
+ * naming convention for these, so this also catches whichever one replaces
+ * the current promo. Requests to it are excluded from the daily usage
+ * dashboard by default: they're free and constant, so counting them there
+ * would drown out the numbers that actually matter for budget/quota tracking.
+ */
+export function isStealthPromoModelId(modelId: string): boolean {
+  return modelId.startsWith("stealth/");
+}
+
+/**
  * Records that a model can't produce native tool calls while streaming, so
  * later requests go out without upstream streaming. Returns false when the
  * model is already marked or isn't configured.
