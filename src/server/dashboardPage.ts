@@ -288,9 +288,12 @@ export function buildDashboardHtml(): string {
       <label class="span-two">Aciklama
         <input id="aeDescription" type="text">
       </label>
-      <label class="span-all">Sistem promptu
-        <textarea id="aeBody" class="prompt-area" rows="8"></textarea>
-      </label>
+      <details class="span-all prompt-details">
+        <summary>Sistem promptu (genislet)</summary>
+        <label>
+          <textarea id="aeBody" class="prompt-area" rows="8"></textarea>
+        </label>
+      </details>
       <div class="form-actions">
         <button type="submit" class="btn" id="agentEditSave">Kaydet</button>
         <button type="button" class="btn btn-secondary" id="agentEditCancel">Vazgec</button>

@@ -775,6 +775,19 @@ textarea.prompt-area {
 textarea.prompt-area:focus { outline: 1px solid var(--accent-dim); outline-offset: 1px; }
 label > .prompt-area { margin-top: 0; }
 
+/* Kapali basliyor: uzun sistem promptlari duzenleme panelini tek basina doldurmasin. */
+.prompt-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  list-style: none;
+}
+.prompt-details summary::-webkit-details-marker { display: none; }
+.prompt-details summary::before { content: "▸  "; }
+.prompt-details[open] summary::before { content: "▾  "; }
+.prompt-details .prompt-area { margin-top: 6px; }
+
 .sub-panel .form-actions,
 .settings-form .form-actions {
   display: flex;
