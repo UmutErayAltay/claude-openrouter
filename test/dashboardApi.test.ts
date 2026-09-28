@@ -431,6 +431,29 @@ describe("GET /dashboard/api/usage", () => {
     expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
   });
 
+  it("still lists stealth/promo models in `recent` even though totals exclude them", async () => {
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 0.02, stream: true },
+      {
+        ts: fakeNow - 1000,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 20,
+        completionTokens: 8,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson("/dashboard/api/usage?days=3&recent=5");
+    // Toplamlar bunny saymaz...
+    expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
+    // ...ama "Son istekler" tablosunda gorunur, yoksa token sutunlari "-" kalir.
+    expect((body.recent as { model: string }[]).map((r) => r.model).sort()).toEqual([
+      "a",
+      "stealth/space-bunny-alpha",
+    ]);
+  });
+
   it("still shows a stealth/promo model when it is explicitly requested", async () => {
     fakeUsage = [
       {

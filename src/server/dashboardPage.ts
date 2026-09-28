@@ -105,8 +105,8 @@ export function buildDashboardHtml(): string {
       </div>
       <div class="table-scroll recent-scroll">
       <table>
-        <thead><tr><th>Zaman</th><th>Model</th><th>Sonuc</th><th class="mono">Sure</th><th class="mono">Maliyet</th></tr></thead>
-        <tbody id="recentBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
+        <thead><tr><th>Zaman</th><th>Model</th><th>Sonuc</th><th class="mono">Sure</th><th class="mono">Giren</th><th class="mono">Cikan</th><th class="mono">Maliyet</th></tr></thead>
+        <tbody id="recentBody"><tr class="empty-row"><td colspan="7">yukleniyor...</td></tr></tbody>
       </table>
       </div>
     </section>

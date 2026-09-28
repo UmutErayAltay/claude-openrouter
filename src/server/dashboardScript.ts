@@ -968,12 +968,15 @@ export const DASHBOARD_JS = `
   // kaydi iki satira birden baglamayiz.
   var COST_MATCH_WINDOW_MS = 3000;
 
-  function matchUsageCosts(recent) {
+  // Ayni karsilastirmadan hem maliyet hem token ciktiyor: tek bir eslesme
+  // yapip üç alanı da birlikte döndürüyoruz, ayri ayri eslestirmek ayni kaydi
+  // iki kez harcama riski tasirdi.
+  function matchUsageRecord(recent) {
     var usageRecent = ((lastUsage && lastUsage.recent) || []).slice();
     var used = {};
-    var costByIndex = [];
+    var matchedByIndex = [];
     recent.forEach(function (r) {
-      costByIndex.push(null);
+      matchedByIndex.push(null);
       var bestIndex = -1;
       var bestDelta = Infinity;
       for (var i = 0; i < usageRecent.length; i++) {
@@ -987,9 +990,9 @@ export const DASHBOARD_JS = `
       }
       if (bestIndex === -1) return;
       used[bestIndex] = true;
-      costByIndex[costByIndex.length - 1] = usageRecent[bestIndex].cost;
+      matchedByIndex[matchedByIndex.length - 1] = usageRecent[bestIndex];
     });
-    return costByIndex;
+    return matchedByIndex;
   }
 
   function renderRecentRows() {
@@ -1018,15 +1021,17 @@ export const DASHBOARD_JS = `
         tr.appendChild(modelCell);
         tr.appendChild(td("ok", "outcome"));
         tr.appendChild(td("-", "mono"));
+        tr.appendChild(td(fmtNum(r.promptTokens), "mono"));
+        tr.appendChild(td(fmtNum(r.completionTokens), "mono"));
         tr.appendChild(td(r.cost === null || r.cost === undefined ? "-" : fmtMoney(r.cost), "mono"));
         return tr;
-      }), 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
+      }), 7, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
       return;
     }
 
-    // Maliyet eslesmesi butun satirlar icin bir kez hesaplanir, sonra
+    // Maliyet + token eslesmesi butun satirlar icin bir kez hesaplanir, sonra
     // suzgecenin gectigi satirlara dagitilir.
-    var costs = matchUsageCosts(recent);
+    var matched = matchUsageRecord(recent);
     var rows = recent.map(function (r, index) {
       if (filter && r.model !== filter) return null;
       if (onlyErrors && r.outcome === "ok") return null;
@@ -1047,13 +1052,17 @@ export const DASHBOARD_JS = `
 
       tr.appendChild(td(fmtSeconds(r.durationSeconds) || "-", "mono"));
 
-      var cost = costs[index];
+      var usage = matched[index];
+      tr.appendChild(td(usage ? fmtNum(usage.promptTokens) : "-", "mono"));
+      tr.appendChild(td(usage ? fmtNum(usage.completionTokens) : "-", "mono"));
+
+      var cost = usage ? usage.cost : null;
       tr.appendChild(td(cost === null || cost === undefined ? "-" : fmtMoney(cost), "mono"));
 
       return tr;
     }).filter(Boolean);
 
-    setRows("recentBody", rows, 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
+    setRows("recentBody", rows, 7, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
   }
 
   function populateRecentModelFilter(models) {
@@ -1661,7 +1670,10 @@ export const DASHBOARD_JS = `
 
   function refreshUsage() {
     var model = qs("recentModelFilter").value;
-    var query = "/dashboard/api/usage?days=14&recent=20";
+    // recent, "Son istekler" tablosundaki satirlarla eslesiyor (matchUsageCosts);
+    // 20 iken 200 satirlik tablonun cogu satiri "- " kaliyordu. Ayni sayi
+    // metrics-recent ile (200) tutulur.
+    var query = "/dashboard/api/usage?days=14&recent=200";
     if (model) query += "&model=" + encodeURIComponent(model);
     get(query).then(renderUsage).catch(function () {});
   }

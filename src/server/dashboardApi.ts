@@ -439,13 +439,26 @@ export async function handleDashboard(
     const days = Number(url.searchParams.get("days") ?? "14") || 14;
     const recent = Number(url.searchParams.get("recent") ?? "20") || 20;
     const model = url.searchParams.get("model") ?? undefined;
-    // Stealth/promo models (bunny) are free and used constantly; left in,
-    // they'd drown out the request/cost numbers this view exists to track.
-    // A model filter asking for one specifically still shows it.
-    const records = model
-      ? deps.readUsage()
-      : deps.readUsage().filter((record) => !isStealthPromoModelId(record.model));
-    sendJson(res, 200, aggregateUsage(records, { days, recent, model, now: deps.now() }));
+    // Totals/grafik stealth/promo modellerini (bunny) disarida birakir: ucretsiz
+    // ve surekli kullanildigi icin butce/kota takibini anlamsizlastirir. Ancak
+    // `recent` bir aktivite tablosudur ("Son istekler") — orada her model
+    // gosterilir, yoksa token sutunlari bunny satirlarinda "-" kalir.
+    const all = deps.readUsage();
+    const scoped = model
+      ? all
+      : all.filter((record) => !isStealthPromoModelId(record.model));
+    const summary = aggregateUsage(scoped, { days, recent, model, now: deps.now() });
+    if (!model) {
+      const recentLimit = recent;
+      const recentStealth = all
+        .filter((record) => isStealthPromoModelId(record.model))
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, recentLimit);
+      const byTs = new Map<number, (typeof all)[number]>();
+      for (const record of [...summary.recent, ...recentStealth]) byTs.set(record.ts, record);
+      summary.recent = [...byTs.values()].sort((a, b) => b.ts - a.ts).slice(0, recentLimit);
+    }
+    sendJson(res, 200, summary);
     return true;
   }
 
