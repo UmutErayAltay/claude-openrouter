@@ -88,40 +88,31 @@ describe("testModel", () => {
     const result = await testModel(config(), { id: "openai/gpt-5" }, (e) => recorded.push(e), "   ");
 
     const sent = JSON.parse(lastRequestBody) as { messages: { content: string }[] };
-    expect(sent.messages[0]?.content).toContain("Say hello in one short sentence.");
+    expect(sent.messages[0]?.content).toBe("Say hello in one short sentence.");
     expect(result.ok).toBe(true);
   });
 
-  it("appends a short-answer instruction so the compare rows stay readable", async () => {
-    await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry), "Merhaba");
+  it("does not send max_tokens, letting entry.maxOutputTokens (or none) apply like a real request", async () => {
+    await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
+    expect((JSON.parse(lastRequestBody) as { max_tokens?: number }).max_tokens).toBeUndefined();
 
-    const sent = JSON.parse(lastRequestBody) as { messages: { content: string }[] };
-    expect(sent.messages[0]?.content).toContain("Merhaba");
-    expect(sent.messages[0]?.content).toContain("Kısa cevap ver");
+    await testModel(
+      config(),
+      { id: "openai/gpt-5", maxOutputTokens: 555 },
+      (entry) => recorded.push(entry),
+    );
+    expect((JSON.parse(lastRequestBody) as { max_tokens?: number }).max_tokens).toBe(555);
   });
 
-  it("turns reasoning off for the test request only", async () => {
-    // Config'deki `reasoning: high/max` gunluk kullanim icin dogru, ama
-    // kiyaslamada butceyi tamamen dusunmeye harciyordu: ya bos metin
-    // donuyor ya da cevap butceyi doldurup karsilastirilacak seyi gizliyordu.
-    const result = await testModel(
+  it("sends the model's configured reasoning effort like a real request", async () => {
+    await testModel(
       config(),
       { id: "openai/gpt-5", reasoning: "max" },
       (entry) => recorded.push(entry),
     );
 
-    const sent = JSON.parse(lastRequestBody) as { reasoning?: unknown };
-    expect(sent.reasoning).toBeUndefined();
-    expect(result.ok).toBe(true);
-  });
-
-  it("keeps max_tokens big enough for a reasoning model but bounded", async () => {
-    // 60'ta tamamen dusunmeye gidiyordu; 1024'te basit sorulara kocaman
-    // cevap uretiyordu. 400 ikisinin de arasinda.
-    await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
-
-    const sent = JSON.parse(lastRequestBody) as { max_tokens?: number };
-    expect(sent.max_tokens).toBe(400);
+    const sent = JSON.parse(lastRequestBody) as { reasoning?: { effort: string } };
+    expect(sent.reasoning).toEqual({ effort: "max" });
   });
 
   it("fails instead of reporting ok when the model returns an empty answer", async () => {
@@ -246,10 +237,8 @@ describe("compareModels", () => {
 
     expect(prompts).toHaveLength(3);
     for (const body of prompts) {
-      // Hepsi ayni soruyu alir; kisa-cevap talimati her birine eklenir.
       const sent = JSON.parse(body) as { messages: { content: string }[] };
-      expect(sent.messages[0]?.content).toContain("ayni soru");
-      expect(sent.messages[0]?.content).toContain("Kısa cevap ver");
+      expect(sent.messages[0]?.content).toBe("ayni soru");
     }
   });
 

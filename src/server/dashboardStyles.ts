@@ -759,6 +759,79 @@ label {
   text-overflow: ellipsis;
 }
 
+/* Yanit hucresi tikla-genislet: kisa onizleme tam metnin oldugunu belli eder. */
+td.compare-answer {
+  cursor: pointer;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+td.compare-answer:hover { color: var(--text); text-decoration: underline dotted; }
+
+/* Tam yanitlari yan yana gosteren modal: her model kendi sutununda, basinda
+   model ismi, govdede kaydirilabilir tam metin. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 1100px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; font-size: 14px; }
+.compare-columns {
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  overflow: auto;
+}
+.compare-column {
+  background: var(--bg-elev);
+  flex: 1 1 0;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+}
+.compare-column-header {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  word-break: break-word;
+}
+.compare-column-body {
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-y: auto;
+}
+.compare-column-body.error { color: var(--danger); }
+
 textarea.prompt-area {
   background: var(--bg-elev-2);
   border: 1px solid var(--border);

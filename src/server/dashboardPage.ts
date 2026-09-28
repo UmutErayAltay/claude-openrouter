@@ -170,6 +170,16 @@ export function buildDashboardHtml(): string {
     </div>
   </section>
 
+  <div class="modal-overlay hidden" id="compareModalOverlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Yanitlar</h3>
+        <button id="compareModalClose" class="btn btn-secondary btn-small" type="button">Kapat</button>
+      </div>
+      <div class="compare-columns" id="compareModalBody"></div>
+    </div>
+  </div>
+
   <section class="card hidden" id="modelFormCard">
     <h2 id="modelFormTitle">Model ekle</h2>
     <div class="preset-row">

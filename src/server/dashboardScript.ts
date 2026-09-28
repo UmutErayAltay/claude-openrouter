@@ -1307,11 +1307,45 @@ export const DASHBOARD_JS = `
     if (count) count.textContent = selectedCompareIds().length + " / " + COMPARE_MAX + " secili";
   }
 
+  // Modal tum tabloyu ayni anda acar (secilen 2-4 model), tek bir satira
+  // ozel degil — "hangi hucreye tiklarsan tikla, hepsini yan yana gor".
+  var lastCompareResults = [];
+
+  function openCompareModal() {
+    var body = qs("compareModalBody");
+    body.textContent = "";
+    lastCompareResults.forEach(function (entry) {
+      var result = entry.result || {};
+      var col = document.createElement("div");
+      col.className = "compare-column";
+
+      var header = document.createElement("div");
+      header.className = "compare-column-header";
+      header.textContent = entry.model;
+      col.appendChild(header);
+
+      var bodyCell = document.createElement("div");
+      bodyCell.className = result.ok ? "compare-column-body" : "compare-column-body error";
+      bodyCell.textContent = result.ok ? (result.text || "-") : (result.error || "bilinmeyen hata");
+      col.appendChild(bodyCell);
+
+      body.appendChild(col);
+    });
+    qs("compareModalOverlay").classList.remove("hidden");
+  }
+
+  function closeCompareModal() {
+    qs("compareModalOverlay").classList.add("hidden");
+  }
+
   function renderCompareResults(results) {
-    var rows = (results || []).map(function (entry) {
+    lastCompareResults = results || [];
+    var rows = lastCompareResults.map(function (entry) {
       var result = entry.result || {};
       var tr = document.createElement("tr");
       if (!result.ok) tr.className = "row-error";
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", openCompareModal);
 
       var modelCell = td(entry.model, "mono");
       modelCell.title = entry.model;
@@ -1322,7 +1356,7 @@ export const DASHBOARD_JS = `
         tr.appendChild(td("-", "mono"));
         tr.appendChild(td("-", "mono"));
         var errorCell = td(result.error || "bilinmeyen hata", "compare-answer");
-        errorCell.title = result.error || "";
+        errorCell.title = "Tam gorunum icin tikla";
         tr.appendChild(errorCell);
         return tr;
       }
@@ -1333,7 +1367,7 @@ export const DASHBOARD_JS = `
       var answer = result.text || "";
       var preview = answer.length > 120 ? answer.slice(0, 120) + "..." : answer;
       var answerCell = td(preview || "-", "compare-answer");
-      answerCell.title = answer;
+      answerCell.title = "Tam gorunum icin tikla";
       tr.appendChild(answerCell);
       return tr;
     });
@@ -1374,6 +1408,14 @@ export const DASHBOARD_JS = `
           button.textContent = label;
           refreshUsage();
         });
+    });
+
+    qs("compareModalClose").addEventListener("click", closeCompareModal);
+    qs("compareModalOverlay").addEventListener("click", function (event) {
+      if (event.target === qs("compareModalOverlay")) closeCompareModal();
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") closeCompareModal();
     });
   }
 

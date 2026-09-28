@@ -19,21 +19,6 @@ export type TestModelResult =
 
 const DEFAULT_TEST_PROMPT = "Say hello in one short sentence.";
 
-// Modeller kıyaslama tablosunda uzun cevap üretince hem token israfı oluyor
-// hem de farklı modellerin "ne kadar uzun cevap verdiği" karşılaştırılan
-// şeyin kendisi oluyor. Talimatı kullanıcının prompt'unun sonuna ekliyoruz
-// ki hem Test et hem Karşılaştır aynı davranışı göstersin.
-const CONCISE_SUFFIX = "\n\n(Kısa cevap ver, en fazla 2-3 cümle.)";
-
-// Kıyaslama testinin sorduğu şey "hangi model verilen soruya daha iyi/ucuz
-// cevap veriyor". Düşünmeye ayrılan token'lar buna hizmet etmiyor, sadece
-// bütçeyi yiyip cevabı kesiyor: 60'ta reasoning modelleri (deepseek high,
-// nemotron max) tamamını düşünmeye harcar ve BOS metin döner; 1024'te ise
-// "Merhaba" gibi basit bir soruya kocaman bir cevap üretip bütçeyi doldurur.
-// 400 ikisinin de arasında: düşünmeye yer var, ama verilen prompt ne kadar
-// uzunsa cevap o kadar uzun — kıyaslama tablosu uzun metni özetler.
-const TEST_MAX_TOKENS = 400;
-
 /**
  * Sends one small real request through a configured model, for the
  * dashboard's "test this model" button. This is a genuine billable call
@@ -49,24 +34,22 @@ export async function testModel(
   // Varsayılan parametre yalnizca `undefined` icin gecerli; dashboard bos
   // metni acikca gonderiyor ve OpenRouter "Input must have at least 1 token"
   // ile 400 donuyordu. Bosluk kirpilip bos kaliyorsa varsayilana dusulur.
-  const question = (prompt?.trim() ? prompt : DEFAULT_TEST_PROMPT) + CONCISE_SUFFIX;
+  const question = prompt?.trim() ? prompt : DEFAULT_TEST_PROMPT;
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
     return { ok: false, error: "OpenRouter anahtari yok. `cor key <anahtar>` calistir." };
   }
 
+  // max_tokens acikca verilmiyor: anthropicToOpenAI, request.max_tokens
+  // yoksa entry.maxOutputTokens'a (modelin gercek ust siniri) duser — ayni
+  // sey normal bir istekte de olur. Boylece test/kiyaslama yapay bir tavan
+  // koymaz, model gercekte verebilecegi tam cevabi doner (config'deki
+  // reasoning ayari da normal istekteki gibi uygulanir).
   const request: AnthropicRequest = {
     model: entry.id,
-    max_tokens: TEST_MAX_TOKENS,
     messages: [{ role: "user", content: question }],
   };
   const payload = anthropicToOpenAI(request, entry);
-  // Kıyaslama yapılandırılmış reasoning ayarını (`high`/`max`) geçici olarak
-  // kapatır: bu ayarlar günlük kullanım için doğru, ama kıyaslama tablosu
-  // bütçeyi tamamen düşünmeye harcadığı için ya boş metin dönüyor ya da
-  // cevap bütçeyi doldurup kıyaslanacak şeyi gizliyordu. Gerçek ayar
-  // config'de duruyor, sadece bu test isteğinde eziliyor.
-  delete payload.reasoning;
   // The test always waits for a single complete answer, regardless of the
   // model's own stream setting — there is no SSE consumer here to feed.
   payload.stream = undefined;
