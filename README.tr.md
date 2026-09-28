@@ -1,6 +1,6 @@
 # claude-openrouter (`cor`)
 
-<!-- TODO: ekran görüntüsü eklenecek -->
+![cor dashboard](docs/screenshots/dashboard.jpg)
 
 *[English](README.md)*
 
