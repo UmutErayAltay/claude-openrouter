@@ -1,6 +1,14 @@
 # claude-openrouter (`cor`)
 
+<!-- TODO: ekran görüntüsü eklenecek -->
+
 *[Türkçe](README.tr.md)*
+
+## Description
+
+`cor` is a local Node.js proxy that sits between Claude Code and its two upstreams, with zero runtime dependencies — `package.json` declares no `dependencies` at all, only dev tooling for the TypeScript build (tsup) and the test suite (vitest). Point `ANTHROPIC_BASE_URL` at it and requests split by model: `claude-*` ids are relayed byte for byte to `api.anthropic.com` with your existing credential, everything else is translated between the Anthropic Messages API and OpenRouter's chat completions. The CLI covers adding and tuning models, writing them into Claude Code's picker, generating subagents, and a `cor doctor` end-to-end self-check. `cor dashboard` serves a self-contained single-page UI — CSS and JS inlined as string modules, no CDN and no build step — covering credit and spend, per-model and latency charts, health checks, model and subagent management, spend caps, alert webhooks, and side-by-side model comparison. Every request lands in `~/.claude-openrouter/usage.jsonl` and in the Prometheus endpoint at `/metrics`, so cost is read from a record rather than guessed at.
+
+---
 
 Adds any model on OpenRouter to Claude Code's `/model` menu — **without touching Claude Code itself**.
 
