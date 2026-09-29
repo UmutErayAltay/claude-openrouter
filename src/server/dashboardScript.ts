@@ -1188,6 +1188,17 @@ export const DASHBOARD_JS = `
         labelLine.textContent = m.label;
         idCell.appendChild(labelLine);
       }
+      if (m.supportedParameters && m.supportedParameters.length) {
+        var paramLine = document.createElement("div");
+        paramLine.className = "param-chips";
+        m.supportedParameters.forEach(function (p) {
+          var chip = document.createElement("span");
+          chip.className = "badge";
+          chip.textContent = p;
+          paramLine.appendChild(chip);
+        });
+        idCell.appendChild(paramLine);
+      }
       tr.appendChild(idCell);
 
       tr.appendChild(td(m.reasoning || "-"));

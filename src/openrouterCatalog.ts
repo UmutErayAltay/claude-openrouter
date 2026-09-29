@@ -10,6 +10,8 @@ export interface CatalogModel {
   promptPrice?: number;
   /** Dollars per million completion tokens; undefined when OpenRouter lists no price. */
   completionPrice?: number;
+  /** OpenRouter `supported_parameters`, e.g. ["reasoning", "tools", "temperature"]. */
+  supportedParameters?: string[];
 }
 
 interface RawCatalogModel {
@@ -20,6 +22,7 @@ interface RawCatalogModel {
   top_provider?: { context_length?: number; max_completion_tokens?: number };
   /** Per-token dollar strings, e.g. "0.0000015"; "0" on the free tier. */
   pricing?: { prompt?: unknown; completion?: unknown };
+  supported_parameters?: unknown;
 }
 
 /** Per-token price string -> dollars per million, or undefined when absent/unparseable. */
@@ -49,6 +52,9 @@ export async function fetchCatalog(config: Config): Promise<CatalogModel[]> {
       maxCompletionTokens: model.top_provider?.max_completion_tokens,
       promptPrice: perMillion(model.pricing?.prompt),
       completionPrice: perMillion(model.pricing?.completion),
+      supportedParameters: Array.isArray(model.supported_parameters)
+        ? model.supported_parameters.filter((p): p is string => typeof p === "string")
+        : undefined,
     }));
 }
 

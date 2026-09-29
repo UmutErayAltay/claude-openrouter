@@ -40,6 +40,7 @@ import {
 import {
   addModel,
   checkFreeTierDrift,
+  refreshSupportedParameters,
   type FreeTierDrift,
   ModelOpError,
   removeModel,
@@ -353,7 +354,8 @@ export async function handleDashboard(
     try {
       const catalog = await getCachedCatalog(config);
       driftDetected = checkFreeTierDrift(config, catalog);
-      if (driftDetected.length > 0) deps.saveConfig(config);
+      const paramsChanged = refreshSupportedParameters(config, catalog);
+      if (driftDetected.length > 0 || paramsChanged) deps.saveConfig(config);
     } catch {
       // Katalog o an alinamazsa drift kontrolu bu turda atlanir, checks listesi degismez.
     }

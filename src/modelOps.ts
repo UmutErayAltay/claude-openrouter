@@ -249,6 +249,7 @@ export async function autofillFromCatalog(config: Config, entry: ModelEntry): Pr
     filled.description ??= shortDescription(match.description);
     filled.contextTokens ??= match.contextLength;
     filled.maxOutputTokens ??= match.maxCompletionTokens;
+    if (match.supportedParameters) filled.supportedParameters = match.supportedParameters;
     // Set only when the catalog actually reports a price on both sides: an
     // entry with no pricing data at all leaves wasFree unset (unknown), while
     // a real positive price sets wasFree explicitly to false (known, not free).
@@ -295,6 +296,23 @@ export function removeModel(config: Config, id: string): boolean {
   const before = config.models.length;
   config.models = config.models.filter((model) => model.id !== id);
   return config.models.length !== before;
+}
+
+/**
+ * Copies the catalog's supported_parameters onto every configured model whose
+ * list is missing or stale (models added before this field existed). Mutates
+ * `config`; returns whether anything changed so the caller knows to save.
+ */
+export function refreshSupportedParameters(config: Config, catalog: CatalogModel[]): boolean {
+  let changed = false;
+  for (const model of config.models) {
+    const params = catalog.find((m) => m.id === model.id)?.supportedParameters;
+    if (params && JSON.stringify(params) !== JSON.stringify(model.supportedParameters)) {
+      model.supportedParameters = params;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export interface FreeTierDrift {

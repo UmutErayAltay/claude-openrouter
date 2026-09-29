@@ -676,6 +676,7 @@ label {
 
 .badge.sync-ok { border-color: var(--success-border); color: var(--success); }
 .badge.sync-stale { border-color: var(--danger-border); color: var(--danger); }
+.param-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .badge.auto-recovered { border-color: var(--accent-border); color: var(--accent); background: var(--accent-bg); margin-left: 6px; }
 
 .providers-row td {

@@ -60,6 +60,12 @@ export interface ModelEntry {
   description?: string;
   /** Real context window, used for CLAUDE_CODE_MAX_CONTEXT_TOKENS. */
   contextTokens?: number;
+  /**
+   * Request parameters the model accepts (OpenRouter `supported_parameters`,
+   * e.g. reasoning, tools, response_format). Refreshed from the catalog, never
+   * hand-edited; informational, cor does not strip anything based on it.
+   */
+  supportedParameters?: string[];
   /** Cap for max_tokens, in case Claude Code asks for more than the model allows. */
   maxOutputTokens?: number;
   /**
