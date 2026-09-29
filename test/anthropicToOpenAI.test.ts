@@ -316,3 +316,30 @@ describe("systemToText", () => {
     expect(systemToText(undefined)).toBe("");
   });
 });
+
+describe("desteklenmeyen parametreler", () => {
+  const req = {
+    model: "x",
+    max_tokens: 100,
+    temperature: 0.5,
+    stop_sequences: ["END"],
+    messages: [{ role: "user" as const, content: "hi" }],
+  };
+
+  it("modelin listesinde olmayan alanlari istekten cikarir", () => {
+    const out = anthropicToOpenAI(req, {
+      id: "a/b",
+      reasoning: "high",
+      supportedParameters: ["max_tokens", "temperature"],
+    });
+    expect(out.max_tokens).toBe(100);
+    expect(out.temperature).toBe(0.5);
+    expect(out.stop).toBeUndefined();
+    expect(out.reasoning).toBeUndefined();
+  });
+
+  it("liste yoksa hicbir sey cikarmaz", () => {
+    const out = anthropicToOpenAI(req, { id: "a/b" });
+    expect(out.stop).toEqual(["END"]);
+  });
+});
