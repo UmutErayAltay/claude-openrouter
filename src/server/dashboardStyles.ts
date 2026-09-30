@@ -84,8 +84,8 @@ header.topbar {
 .dot.bad { background: var(--danger); }
 
 main {
-  max-width: 980px;
-  margin: 0;
+  max-width: 1360px;
+  margin: 0 auto;
   padding: 20px 20px 40px;
   display: flex;
   flex-direction: column;
