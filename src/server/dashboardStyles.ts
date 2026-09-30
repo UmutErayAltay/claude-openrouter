@@ -676,8 +676,56 @@ label {
 
 .badge.sync-ok { border-color: var(--success-border); color: var(--success); }
 .badge.sync-stale { border-color: var(--danger-border); color: var(--danger); }
-.param-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .badge.auto-recovered { border-color: var(--accent-border); color: var(--accent); background: var(--accent-bg); margin-left: 6px; }
+
+.param-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.param-warn-row,
+.param-more-row {
+  display: flex;
+}
+.param {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.param.off {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  border: none;
+  background: transparent;
+}
+.param.warn {
+  color: var(--text);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+.param.more {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+@media (max-width: 600px) {
+  .param-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}
 
 .providers-row td {
   background: var(--bg-elev-2);

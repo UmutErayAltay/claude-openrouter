@@ -1168,6 +1168,70 @@ export const DASHBOARD_JS = `
 
   var currentModels = [];
 
+  // Fixed order for parameter strip — same column on every row for vertical scanning
+  // 10 params -> 3 columns x 4 rows grid (fits structured_outputs 18ch in ~410px model col).
+  // Warn + more outside grid.
+  var PARAM_ORDER = [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "response_format",
+    "structured_outputs",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+  ];
+
+  function renderParamStrip(params) {
+    if (!params || !params.length) return null;
+    var strip = document.createElement("div");
+    strip.className = "param-strip";
+
+    var supported = new Set(params);
+    var hasTools = supported.has("tools");
+
+    // Warn row (if tools missing) — full width, above grid
+    if (!hasTools) {
+      var warnRow = document.createElement("div");
+      warnRow.className = "param-warn-row";
+      var warn = document.createElement("span");
+      warn.className = "param warn";
+      warn.textContent = "tool yok";
+      warn.title = "cor bu modele giden isteklerden tool'lari cikarir";
+      warnRow.appendChild(warn);
+      strip.appendChild(warnRow);
+    }
+
+    // Grid: 4 columns x 3 rows for the 10 fixed params
+    var grid = document.createElement("div");
+    grid.className = "param-grid";
+    PARAM_ORDER.forEach(function (name) {
+      var el = document.createElement("span");
+      el.className = "param" + (supported.has(name) ? "" : " off");
+      el.textContent = name;
+      el.title = name; // full name on hover if ellipsis
+      grid.appendChild(el);
+    });
+    strip.appendChild(grid);
+
+    // Extra params not in fixed order -> single +N token, below grid
+    var extras = params.filter(function (p) { return PARAM_ORDER.indexOf(p) === -1; });
+    if (extras.length) {
+      var moreRow = document.createElement("div");
+      moreRow.className = "param-more-row";
+      var more = document.createElement("span");
+      more.className = "param more";
+      more.textContent = "+" + extras.length;
+      more.title = extras.join(", ");
+      moreRow.appendChild(more);
+      strip.appendChild(moreRow);
+    }
+
+    return strip;
+  }
+
   function renderModels(models) {
     currentModels = models;
     // The "Ekli model" tile reads currentModels; the models fetch can land
@@ -1188,17 +1252,8 @@ export const DASHBOARD_JS = `
         labelLine.textContent = m.label;
         idCell.appendChild(labelLine);
       }
-      if (m.supportedParameters && m.supportedParameters.length) {
-        var paramLine = document.createElement("div");
-        paramLine.className = "param-chips";
-        m.supportedParameters.forEach(function (p) {
-          var chip = document.createElement("span");
-          chip.className = "badge";
-          chip.textContent = p;
-          paramLine.appendChild(chip);
-        });
-        idCell.appendChild(paramLine);
-      }
+      var strip = renderParamStrip(m.supportedParameters);
+      if (strip) idCell.appendChild(strip);
       tr.appendChild(idCell);
 
       tr.appendChild(td(m.reasoning || "-"));
