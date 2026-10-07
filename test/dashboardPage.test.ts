@@ -27,6 +27,7 @@ const REFERENCED_IDS = [
   "fReasoning",
   "fSort",
   "fStream",
+  "fNative",
   "fQuantizations",
   "fMaxPriceIn",
   "fMaxPriceOut",
