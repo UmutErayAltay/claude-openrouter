@@ -221,6 +221,74 @@ describe("anthropicToOpenAI", () => {
     expect(result.tool_choice).toBe("required");
   });
 
+  it("drops tool schema patterns a linear-time regex engine can't compile", () => {
+    const result = anthropicToOpenAI(
+      build({
+        tools: [
+          {
+            name: "Artifact",
+            input_schema: {
+              type: "object",
+              properties: {
+                after: { type: "string", pattern: "^[A-Za-z0-9_=-]{1,4096}$" },
+                collection: { type: "string", pattern: "^(?!\\.\\.?(?:/|$))[A-Za-z0-9_]{1,200}$" },
+                same: { type: "string", pattern: "^(a)\\1$" },
+                id: { type: "string", pattern: "^[0-9a-f]{32}$" },
+                nested: {
+                  type: "array",
+                  items: { anyOf: [{ type: "string", pattern: "^(?<=x)y$" }, { type: "number" }] },
+                },
+              },
+            },
+          },
+        ],
+      }),
+      entry,
+    );
+
+    expect(result.tools?.[0]?.function.parameters).toEqual({
+      type: "object",
+      properties: {
+        after: { type: "string" },
+        collection: { type: "string" },
+        same: { type: "string" },
+        id: { type: "string", pattern: "^[0-9a-f]{32}$" },
+        nested: { type: "array", items: { anyOf: [{ type: "string" }, { type: "number" }] } },
+      },
+    });
+  });
+
+  it("keeps a property that is itself named pattern", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "regex to search for", pattern: "^(?=x)" },
+        glob: { type: "string", enum: ["^(?=x)"] },
+      },
+      required: ["pattern"],
+    };
+    const result = anthropicToOpenAI(
+      build({ tools: [{ name: "Grep", input_schema: schema }] }),
+      entry,
+    );
+
+    expect(result.tools?.[0]?.function.parameters).toEqual({
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "regex to search for" },
+        glob: { type: "string", enum: ["^(?=x)"] },
+      },
+      required: ["pattern"],
+    });
+  });
+
+  it("does not mutate the incoming tool schema", () => {
+    const schema = { type: "object", properties: { x: { type: "string", pattern: "(?!a)" } } };
+    anthropicToOpenAI(build({ tools: [{ name: "T", input_schema: schema }] }), entry);
+
+    expect(schema.properties.x.pattern).toBe("(?!a)");
+  });
+
   it("maps a named tool_choice", () => {
     const result = anthropicToOpenAI(
       build({
