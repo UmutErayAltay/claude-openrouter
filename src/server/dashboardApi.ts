@@ -13,6 +13,8 @@ import { writeAgent as writeAgentImpl } from "../agentTemplate.js";
 import {
   configPath,
   findModel,
+  isFreeTierModelId,
+  isStealthPromoModelId,
   keySource,
   listConfigHistory,
   logPath,
@@ -38,6 +40,7 @@ import {
 import {
   addModel,
   checkFreeTierDrift,
+  refreshSupportedParameters,
   type FreeTierDrift,
   ModelOpError,
   removeModel,
@@ -60,6 +63,7 @@ import { tailLines } from "../logTail.js";
 import { spawnReplacementProxy } from "../proxyProcess.js";
 import {
   aggregateUsage,
+  countFreeTierUsage,
   recordUsage as recordUsageImpl,
   readUsage as readUsageImpl,
   type UsageRecord,
@@ -350,7 +354,8 @@ export async function handleDashboard(
     try {
       const catalog = await getCachedCatalog(config);
       driftDetected = checkFreeTierDrift(config, catalog);
-      if (driftDetected.length > 0) deps.saveConfig(config);
+      const paramsChanged = refreshSupportedParameters(config, catalog);
+      if (driftDetected.length > 0 || paramsChanged) deps.saveConfig(config);
     } catch {
       // Katalog o an alinamazsa drift kontrolu bu turda atlanir, checks listesi degismez.
     }
@@ -403,6 +408,23 @@ export async function handleDashboard(
             "UTC 00:00'da sifirlanir. fallbackModel tanimli modeller otomatik gecer."
           : undefined,
       },
+      ...(() => {
+        const usage = countFreeTierUsage(
+          deps.readUsage(),
+          (modelId) => isFreeTierModelId(config, modelId),
+          deps.now(),
+        );
+        const ok = usage.day.count < usage.day.limit && usage.minute.count < usage.minute.limit;
+        return [
+          {
+            id: "free_quota_count",
+            // Sayı her zaman etikette gorunur (hint yalnizca !ok iken gosteriliyor).
+            label: `Ucretsiz model kullanimi (bunny haric): ${usage.day.count}/${usage.day.limit} bugun, ${usage.minute.count}/${usage.minute.limit} dakika`,
+            ok,
+            hint: ok ? undefined : "Kota doluyor; bunny/stealth modele veya baska bir modele gecmeyi dusun.",
+          },
+        ];
+      })(),
       ...driftChecks,
     ];
     sendJson(res, 200, { checks });
@@ -419,7 +441,26 @@ export async function handleDashboard(
     const days = Number(url.searchParams.get("days") ?? "14") || 14;
     const recent = Number(url.searchParams.get("recent") ?? "20") || 20;
     const model = url.searchParams.get("model") ?? undefined;
-    sendJson(res, 200, aggregateUsage(deps.readUsage(), { days, recent, model, now: deps.now() }));
+    // Totals/grafik stealth/promo modellerini (bunny) disarida birakir: ucretsiz
+    // ve surekli kullanildigi icin butce/kota takibini anlamsizlastirir. Ancak
+    // `recent` bir aktivite tablosudur ("Son istekler") — orada her model
+    // gosterilir, yoksa token sutunlari bunny satirlarinda "-" kalir.
+    const all = deps.readUsage();
+    const scoped = model
+      ? all
+      : all.filter((record) => !isStealthPromoModelId(record.model));
+    const summary = aggregateUsage(scoped, { days, recent, model, now: deps.now() });
+    if (!model) {
+      const recentLimit = recent;
+      const recentStealth = all
+        .filter((record) => isStealthPromoModelId(record.model))
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, recentLimit);
+      const byTs = new Map<number, (typeof all)[number]>();
+      for (const record of [...summary.recent, ...recentStealth]) byTs.set(record.ts, record);
+      summary.recent = [...byTs.values()].sort((a, b) => b.ts - a.ts).slice(0, recentLimit);
+    }
+    sendJson(res, 200, summary);
     return true;
   }
 
@@ -571,8 +612,7 @@ export async function handleDashboard(
     }
 
     const entries = (ids as string[]).map((id) => findModel(config, id) as ModelEntry);
-    // testModel's own default prompt applies to an empty string, so an omitted
-    // prompt and a blank one mean the same thing here.
+    // Bos/atlama prompt testModel'in varsayilanina duser (orada dusecek).
     const prompt = typeof body?.prompt === "string" ? body.prompt : "";
     sendJson(res, 200, {
       results: await compareModelsImpl(config, entries, prompt, deps.recordUsage),

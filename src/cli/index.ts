@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import {
   configPath,
   findModel,
+  isFreeTierModelId,
   keyPath,
   loadConfig,
   logPath,
@@ -12,6 +13,7 @@ import {
   saveConfig,
   saveKey,
 } from "../config.js";
+import { countFreeTierUsage, readUsage } from "../usageLog.js";
 import {
   backupPath,
   claudeSettingsPath,
@@ -367,6 +369,13 @@ async function commandStatus(): Promise<number> {
   process.stdout.write("\n");
   process.stdout.write(`Anahtar: ${resolveOpenRouterKey(config) ? "var" : "YOK"}\n`);
   process.stdout.write(`Model:   ${config.models.length} ekli\n`);
+
+  const usage = countFreeTierUsage(readUsage(), (modelId) => isFreeTierModelId(config, modelId));
+  process.stdout.write(
+    `Ucretsiz kota: ${usage.day.count}/${usage.day.limit} bugun, ` +
+      `${usage.minute.count}/${usage.minute.limit} bu dakika (bunny haric)\n`,
+  );
+
   return answering ? 0 : 1;
 }
 

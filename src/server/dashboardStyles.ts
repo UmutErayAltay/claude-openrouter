@@ -84,8 +84,8 @@ header.topbar {
 .dot.bad { background: var(--danger); }
 
 main {
-  max-width: 980px;
-  margin: 0;
+  max-width: 1360px;
+  margin: 0 auto;
   padding: 20px 20px 40px;
   display: flex;
   flex-direction: column;
@@ -678,6 +678,55 @@ label {
 .badge.sync-stale { border-color: var(--danger-border); color: var(--danger); }
 .badge.auto-recovered { border-color: var(--accent-border); color: var(--accent); background: var(--accent-bg); margin-left: 6px; }
 
+.param-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.param-warn-row,
+.param-more-row {
+  display: flex;
+}
+.param {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.param.off {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  border: none;
+  background: transparent;
+}
+.param.warn {
+  color: var(--text);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+.param.more {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+@media (max-width: 600px) {
+  .param-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}
+
 .providers-row td {
   background: var(--bg-elev-2);
   padding: 10px 14px;
@@ -759,6 +808,79 @@ label {
   text-overflow: ellipsis;
 }
 
+/* Yanit hucresi tikla-genislet: kisa onizleme tam metnin oldugunu belli eder. */
+td.compare-answer {
+  cursor: pointer;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+td.compare-answer:hover { color: var(--text); text-decoration: underline dotted; }
+
+/* Tam yanitlari yan yana gosteren modal: her model kendi sutununda, basinda
+   model ismi, govdede kaydirilabilir tam metin. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 1100px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; font-size: 14px; }
+.compare-columns {
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  overflow: auto;
+}
+.compare-column {
+  background: var(--bg-elev);
+  flex: 1 1 0;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+}
+.compare-column-header {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  word-break: break-word;
+}
+.compare-column-body {
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-y: auto;
+}
+.compare-column-body.error { color: var(--danger); }
+
 textarea.prompt-area {
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
@@ -774,6 +896,19 @@ textarea.prompt-area {
 }
 textarea.prompt-area:focus { outline: 1px solid var(--accent-dim); outline-offset: 1px; }
 label > .prompt-area { margin-top: 0; }
+
+/* Kapali basliyor: uzun sistem promptlari duzenleme panelini tek basina doldurmasin. */
+.prompt-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  list-style: none;
+}
+.prompt-details summary::-webkit-details-marker { display: none; }
+.prompt-details summary::before { content: "▸  "; }
+.prompt-details[open] summary::before { content: "▾  "; }
+.prompt-details .prompt-area { margin-top: 6px; }
 
 .sub-panel .form-actions,
 .settings-form .form-actions {

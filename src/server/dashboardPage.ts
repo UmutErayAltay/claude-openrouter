@@ -105,8 +105,8 @@ export function buildDashboardHtml(): string {
       </div>
       <div class="table-scroll recent-scroll">
       <table>
-        <thead><tr><th>Zaman</th><th>Model</th><th>Sonuc</th><th class="mono">Sure</th><th class="mono">Maliyet</th></tr></thead>
-        <tbody id="recentBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
+        <thead><tr><th>Zaman</th><th>Model</th><th>Sonuc</th><th class="mono">Sure</th><th class="mono">Giren</th><th class="mono">Cikan</th><th class="mono">Maliyet</th></tr></thead>
+        <tbody id="recentBody"><tr class="empty-row"><td colspan="7">yukleniyor...</td></tr></tbody>
       </table>
       </div>
     </section>
@@ -169,6 +169,16 @@ export function buildDashboardHtml(): string {
       </div>
     </div>
   </section>
+
+  <div class="modal-overlay hidden" id="compareModalOverlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Yanitlar</h3>
+        <button id="compareModalClose" class="btn btn-secondary btn-small" type="button">Kapat</button>
+      </div>
+      <div class="compare-columns" id="compareModalBody"></div>
+    </div>
+  </div>
 
   <section class="card hidden" id="modelFormCard">
     <h2 id="modelFormTitle">Model ekle</h2>
@@ -254,6 +264,10 @@ export function buildDashboardHtml(): string {
       <tbody id="agentsBody"><tr class="empty-row"><td colspan="8">yukleniyor...</td></tr></tbody>
     </table>
     </div>
+    <div class="hint" id="agentsMoreHint"></div>
+    <div class="form-actions" id="agentsToggleRow" style="display:none">
+      <button id="agentsMoreBtn" class="btn btn-secondary btn-small" type="button" aria-expanded="false">Daha fazla goster</button>
+    </div>
     <div class="hidden" id="agentFormPanel">
     <form id="agentForm" class="agent-form">
       <label>Ad
@@ -288,9 +302,12 @@ export function buildDashboardHtml(): string {
       <label class="span-two">Aciklama
         <input id="aeDescription" type="text">
       </label>
-      <label class="span-all">Sistem promptu
-        <textarea id="aeBody" class="prompt-area" rows="8"></textarea>
-      </label>
+      <details class="span-all prompt-details">
+        <summary>Sistem promptu (genislet)</summary>
+        <label>
+          <textarea id="aeBody" class="prompt-area" rows="8"></textarea>
+        </label>
+      </details>
       <div class="form-actions">
         <button type="submit" class="btn" id="agentEditSave">Kaydet</button>
         <button type="button" class="btn btn-secondary" id="agentEditCancel">Vazgec</button>

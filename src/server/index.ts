@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Config } from "../config.js";
-import { findModel, loadConfig } from "../config.js";
+import { findModel, isFreeTierModelId, loadConfig } from "../config.js";
 import { isFreeQuotaExhausted } from "../quotaGuard.js";
 import { anthropicError } from "../translate/errors.js";
 import { systemToText } from "../translate/anthropicToOpenAI.js";
@@ -136,10 +136,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
   // session can burn through it in a handful of turns. Once we've seen the
   // quota reject a request today, route away from it automatically instead
   // of failing every subsequent turn for the rest of the day.
-  // wasFree is set going forward (see modelOps.autofillFromCatalog), but a
-  // model added before that existed has no such flag; the ":free" suffix is
-  // OpenRouter's own convention and catches those too.
-  const isFreeTierModel = route.entry.wasFree || route.entry.id.endsWith(":free");
+  const isFreeTierModel = isFreeTierModelId(config, route.entry.id);
   if (isFreeTierModel && isFreeQuotaExhausted()) {
     const fallback = route.entry.fallbackModel ? findModel(config, route.entry.fallbackModel) : undefined;
     if (fallback) {

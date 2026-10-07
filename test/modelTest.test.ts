@@ -82,6 +82,57 @@ describe("testModel", () => {
     if (result.ok) expect(result.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("falls back to the default prompt when given a blank one", async () => {
+    // JS varsayilan parametresi yalnizca `undefined` icin gecerli; dashboard
+    // bos metni acikca gonderiyordu ve OpenRouter 400 donuyordu.
+    const result = await testModel(config(), { id: "openai/gpt-5" }, (e) => recorded.push(e), "   ");
+
+    const sent = JSON.parse(lastRequestBody) as { messages: { content: string }[] };
+    expect(sent.messages[0]?.content).toBe("Say hello in one short sentence.");
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not send max_tokens, letting entry.maxOutputTokens (or none) apply like a real request", async () => {
+    await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
+    expect((JSON.parse(lastRequestBody) as { max_tokens?: number }).max_tokens).toBeUndefined();
+
+    await testModel(
+      config(),
+      { id: "openai/gpt-5", maxOutputTokens: 555 },
+      (entry) => recorded.push(entry),
+    );
+    expect((JSON.parse(lastRequestBody) as { max_tokens?: number }).max_tokens).toBe(555);
+  });
+
+  it("sends the model's configured reasoning effort like a real request", async () => {
+    await testModel(
+      config(),
+      { id: "openai/gpt-5", reasoning: "max" },
+      (entry) => recorded.push(entry),
+    );
+
+    const sent = JSON.parse(lastRequestBody) as { reasoning?: { effort: string } };
+    expect(sent.reasoning).toEqual({ effort: "max" });
+  });
+
+  it("fails instead of reporting ok when the model returns an empty answer", async () => {
+    // Dusenme butcesi bitmis bir model HTTP 200 doner ama metin bos kalir.
+    // Bunu basari diye gostermek dashboard'da yaniltici yesil bir satir olur.
+    respond = () => ({
+      status: 200,
+      body: {
+        id: "gen-1",
+        choices: [{ message: { content: "" }, finish_reason: "length" }],
+        usage: { prompt_tokens: 12, completion_tokens: 60, cost: 0 },
+      },
+    });
+
+    const result = await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("60");
+  });
+
   it("records the call in the usage log like a real request", async () => {
     await testModel(config(), { id: "openai/gpt-5" }, (entry) => recorded.push(entry));
 
@@ -186,7 +237,8 @@ describe("compareModels", () => {
 
     expect(prompts).toHaveLength(3);
     for (const body of prompts) {
-      expect((JSON.parse(body) as { messages: { content: string }[] }).messages[0]?.content).toBe("ayni soru");
+      const sent = JSON.parse(body) as { messages: { content: string }[] };
+      expect(sent.messages[0]?.content).toBe("ayni soru");
     }
   });
 

@@ -120,6 +120,6 @@ geri bildirim `.toast` kullanır.
    `test/dashboardApi.test.ts` / `test/dashboardPage.test.ts` güncel mi?
 2. Sayfayı GERÇEKTEN aç (`cor start` → `http://127.0.0.1:8787/dashboard`)
    ve bir kez bak: etiket çakışması, taşma, dar ekran (`main` `max-width:
-   980px`, sabit `width` yok).
+   1360px`, ortalı; sabit `width` yok).
 3. Boş veri durumunu gerçekten tetikle.
 4. Konsol hatası yok (`node --check` en az).

@@ -29,17 +29,25 @@ export async function testModel(
   config: Config,
   entry: ModelEntry,
   recordUsage: (record: Omit<UsageRecord, "ts">) => void,
-  prompt: string = DEFAULT_TEST_PROMPT,
+  prompt?: string,
 ): Promise<TestModelResult> {
+  // Varsayılan parametre yalnizca `undefined` icin gecerli; dashboard bos
+  // metni acikca gonderiyor ve OpenRouter "Input must have at least 1 token"
+  // ile 400 donuyordu. Bosluk kirpilip bos kaliyorsa varsayilana dusulur.
+  const question = prompt?.trim() ? prompt : DEFAULT_TEST_PROMPT;
   const apiKey = resolveOpenRouterKey(config);
   if (!apiKey) {
     return { ok: false, error: "OpenRouter anahtari yok. `cor key <anahtar>` calistir." };
   }
 
+  // max_tokens acikca verilmiyor: anthropicToOpenAI, request.max_tokens
+  // yoksa entry.maxOutputTokens'a (modelin gercek ust siniri) duser — ayni
+  // sey normal bir istekte de olur. Boylece test/kiyaslama yapay bir tavan
+  // koymaz, model gercekte verebilecegi tam cevabi doner (config'deki
+  // reasoning ayari da normal istekteki gibi uygulanir).
   const request: AnthropicRequest = {
     model: entry.id,
-    max_tokens: 60,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: question }],
   };
   const payload = anthropicToOpenAI(request, entry);
   // The test always waits for a single complete answer, regardless of the
@@ -59,7 +67,6 @@ export async function testModel(
         "x-title": "claude-openrouter",
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(60_000),
     });
   } catch (err) {
     return { ok: false, error: `OpenRouter'a ulasilamadi: ${(err as Error).message}` };
@@ -82,10 +89,24 @@ export async function testModel(
   const textBlock = anthropic.content.find(
     (block): block is { type: "text"; text: string } => block.type === "text",
   );
+  const text = textBlock?.text ?? "";
+
+  // HTTP 200 olmus olabilir ama cevap bos olabilir (model hic sey yazmadan
+  // durmus olabilir). Bunu "calisiyor" diye gostermek dashboard'da yesil ama
+  // bos bir satir olurdu; gercek bir basarisizlik daha dogru.
+  if (text.trim() === "") {
+    const spent = raw.usage?.completion_tokens ?? 0;
+    return {
+      ok: false,
+      error:
+        `Model yanit dondurmedi (${spent} cikti tokeni, bos metin). ` +
+        "Baska bir soru dene veya modelin sunucusuna bak.",
+    };
+  }
 
   return {
     ok: true,
-    text: textBlock?.text ?? "",
+    text,
     latencyMs,
     promptTokens: raw.usage?.prompt_tokens ?? 0,
     completionTokens: raw.usage?.completion_tokens ?? 0,

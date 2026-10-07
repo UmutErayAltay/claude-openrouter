@@ -14,9 +14,11 @@ export const DASHBOARD_JS = `
 
   var SVG_NS = "http://www.w3.org/2000/svg";
   var HOUR_MS_TOTAL = 60 * 60 * 1000;
+  var AGENTS_COLLAPSED = 5;
   var lastMetrics = null;
   var lastRecent = null;
   var currentAgents = null;
+  var agentsExpanded = false;
 
   function qs(id) { return document.getElementById(id); }
 
@@ -966,12 +968,15 @@ export const DASHBOARD_JS = `
   // kaydi iki satira birden baglamayiz.
   var COST_MATCH_WINDOW_MS = 3000;
 
-  function matchUsageCosts(recent) {
+  // Ayni karsilastirmadan hem maliyet hem token ciktiyor: tek bir eslesme
+  // yapip üç alanı da birlikte döndürüyoruz, ayri ayri eslestirmek ayni kaydi
+  // iki kez harcama riski tasirdi.
+  function matchUsageRecord(recent) {
     var usageRecent = ((lastUsage && lastUsage.recent) || []).slice();
     var used = {};
-    var costByIndex = [];
+    var matchedByIndex = [];
     recent.forEach(function (r) {
-      costByIndex.push(null);
+      matchedByIndex.push(null);
       var bestIndex = -1;
       var bestDelta = Infinity;
       for (var i = 0; i < usageRecent.length; i++) {
@@ -985,9 +990,9 @@ export const DASHBOARD_JS = `
       }
       if (bestIndex === -1) return;
       used[bestIndex] = true;
-      costByIndex[costByIndex.length - 1] = usageRecent[bestIndex].cost;
+      matchedByIndex[matchedByIndex.length - 1] = usageRecent[bestIndex];
     });
-    return costByIndex;
+    return matchedByIndex;
   }
 
   function renderRecentRows() {
@@ -1016,15 +1021,17 @@ export const DASHBOARD_JS = `
         tr.appendChild(modelCell);
         tr.appendChild(td("ok", "outcome"));
         tr.appendChild(td("-", "mono"));
+        tr.appendChild(td(fmtNum(r.promptTokens), "mono"));
+        tr.appendChild(td(fmtNum(r.completionTokens), "mono"));
         tr.appendChild(td(r.cost === null || r.cost === undefined ? "-" : fmtMoney(r.cost), "mono"));
         return tr;
-      }), 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
+      }), 7, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
       return;
     }
 
-    // Maliyet eslesmesi butun satirlar icin bir kez hesaplanir, sonra
+    // Maliyet + token eslesmesi butun satirlar icin bir kez hesaplanir, sonra
     // suzgecenin gectigi satirlara dagitilir.
-    var costs = matchUsageCosts(recent);
+    var matched = matchUsageRecord(recent);
     var rows = recent.map(function (r, index) {
       if (filter && r.model !== filter) return null;
       if (onlyErrors && r.outcome === "ok") return null;
@@ -1045,13 +1052,17 @@ export const DASHBOARD_JS = `
 
       tr.appendChild(td(fmtSeconds(r.durationSeconds) || "-", "mono"));
 
-      var cost = costs[index];
+      var usage = matched[index];
+      tr.appendChild(td(usage ? fmtNum(usage.promptTokens) : "-", "mono"));
+      tr.appendChild(td(usage ? fmtNum(usage.completionTokens) : "-", "mono"));
+
+      var cost = usage ? usage.cost : null;
       tr.appendChild(td(cost === null || cost === undefined ? "-" : fmtMoney(cost), "mono"));
 
       return tr;
     }).filter(Boolean);
 
-    setRows("recentBody", rows, 5, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
+    setRows("recentBody", rows, 7, onlyErrors ? "Hatali istek yok." : "Henuz istek yok.");
   }
 
   function populateRecentModelFilter(models) {
@@ -1157,6 +1168,70 @@ export const DASHBOARD_JS = `
 
   var currentModels = [];
 
+  // Fixed order for parameter strip — same column on every row for vertical scanning
+  // 10 params -> 3 columns x 4 rows grid (fits structured_outputs 18ch in ~410px model col).
+  // Warn + more outside grid.
+  var PARAM_ORDER = [
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "include_reasoning",
+    "response_format",
+    "structured_outputs",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+  ];
+
+  function renderParamStrip(params) {
+    if (!params || !params.length) return null;
+    var strip = document.createElement("div");
+    strip.className = "param-strip";
+
+    var supported = new Set(params);
+    var hasTools = supported.has("tools");
+
+    // Warn row (if tools missing) — full width, above grid
+    if (!hasTools) {
+      var warnRow = document.createElement("div");
+      warnRow.className = "param-warn-row";
+      var warn = document.createElement("span");
+      warn.className = "param warn";
+      warn.textContent = "tool yok";
+      warn.title = "cor bu modele giden isteklerden tool'lari cikarir";
+      warnRow.appendChild(warn);
+      strip.appendChild(warnRow);
+    }
+
+    // Grid: 4 columns x 3 rows for the 10 fixed params
+    var grid = document.createElement("div");
+    grid.className = "param-grid";
+    PARAM_ORDER.forEach(function (name) {
+      var el = document.createElement("span");
+      el.className = "param" + (supported.has(name) ? "" : " off");
+      el.textContent = name;
+      el.title = name; // full name on hover if ellipsis
+      grid.appendChild(el);
+    });
+    strip.appendChild(grid);
+
+    // Extra params not in fixed order -> single +N token, below grid
+    var extras = params.filter(function (p) { return PARAM_ORDER.indexOf(p) === -1; });
+    if (extras.length) {
+      var moreRow = document.createElement("div");
+      moreRow.className = "param-more-row";
+      var more = document.createElement("span");
+      more.className = "param more";
+      more.textContent = "+" + extras.length;
+      more.title = extras.join(", ");
+      moreRow.appendChild(more);
+      strip.appendChild(moreRow);
+    }
+
+    return strip;
+  }
+
   function renderModels(models) {
     currentModels = models;
     // The "Ekli model" tile reads currentModels; the models fetch can land
@@ -1177,6 +1252,8 @@ export const DASHBOARD_JS = `
         labelLine.textContent = m.label;
         idCell.appendChild(labelLine);
       }
+      var strip = renderParamStrip(m.supportedParameters);
+      if (strip) idCell.appendChild(strip);
       tr.appendChild(idCell);
 
       tr.appendChild(td(m.reasoning || "-"));
@@ -1296,11 +1373,45 @@ export const DASHBOARD_JS = `
     if (count) count.textContent = selectedCompareIds().length + " / " + COMPARE_MAX + " secili";
   }
 
+  // Modal tum tabloyu ayni anda acar (secilen 2-4 model), tek bir satira
+  // ozel degil — "hangi hucreye tiklarsan tikla, hepsini yan yana gor".
+  var lastCompareResults = [];
+
+  function openCompareModal() {
+    var body = qs("compareModalBody");
+    body.textContent = "";
+    lastCompareResults.forEach(function (entry) {
+      var result = entry.result || {};
+      var col = document.createElement("div");
+      col.className = "compare-column";
+
+      var header = document.createElement("div");
+      header.className = "compare-column-header";
+      header.textContent = entry.model;
+      col.appendChild(header);
+
+      var bodyCell = document.createElement("div");
+      bodyCell.className = result.ok ? "compare-column-body" : "compare-column-body error";
+      bodyCell.textContent = result.ok ? (result.text || "-") : (result.error || "bilinmeyen hata");
+      col.appendChild(bodyCell);
+
+      body.appendChild(col);
+    });
+    qs("compareModalOverlay").classList.remove("hidden");
+  }
+
+  function closeCompareModal() {
+    qs("compareModalOverlay").classList.add("hidden");
+  }
+
   function renderCompareResults(results) {
-    var rows = (results || []).map(function (entry) {
+    lastCompareResults = results || [];
+    var rows = lastCompareResults.map(function (entry) {
       var result = entry.result || {};
       var tr = document.createElement("tr");
       if (!result.ok) tr.className = "row-error";
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", openCompareModal);
 
       var modelCell = td(entry.model, "mono");
       modelCell.title = entry.model;
@@ -1311,7 +1422,7 @@ export const DASHBOARD_JS = `
         tr.appendChild(td("-", "mono"));
         tr.appendChild(td("-", "mono"));
         var errorCell = td(result.error || "bilinmeyen hata", "compare-answer");
-        errorCell.title = result.error || "";
+        errorCell.title = "Tam gorunum icin tikla";
         tr.appendChild(errorCell);
         return tr;
       }
@@ -1322,7 +1433,7 @@ export const DASHBOARD_JS = `
       var answer = result.text || "";
       var preview = answer.length > 120 ? answer.slice(0, 120) + "..." : answer;
       var answerCell = td(preview || "-", "compare-answer");
-      answerCell.title = answer;
+      answerCell.title = "Tam gorunum icin tikla";
       tr.appendChild(answerCell);
       return tr;
     });
@@ -1363,6 +1474,14 @@ export const DASHBOARD_JS = `
           button.textContent = label;
           refreshUsage();
         });
+    });
+
+    qs("compareModalClose").addEventListener("click", closeCompareModal);
+    qs("compareModalOverlay").addEventListener("click", function (event) {
+      if (event.target === qs("compareModalOverlay")) closeCompareModal();
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") closeCompareModal();
     });
   }
 
@@ -1481,7 +1600,26 @@ export const DASHBOARD_JS = `
     currentAgents = payload;
 
     var stats = modelStats24h();
-    var rows = payload.agents.map(function (agent) {
+    // Uzun ajan listesi tek sayfayi asiriyordu: varsayilan olarak ilk
+    // AGENTS_COLLAPSED kadarini goster, gerisini buton acsin.
+    var agents = payload.agents;
+    var expanded = agentsExpanded || agents.length <= AGENTS_COLLAPSED;
+    var hiddenCount = agents.length - AGENTS_COLLAPSED;
+
+    var toggleRow = qs("agentsToggleRow");
+    if (hiddenCount > 0) {
+      toggleRow.style.display = "flex";
+      var moreBtn = qs("agentsMoreBtn");
+      moreBtn.textContent = expanded ? "Daha az goster" : "Daha fazla goster (" + hiddenCount + ")";
+      moreBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    } else {
+      toggleRow.style.display = "none";
+    }
+    qs("agentsMoreHint").textContent = hiddenCount > 0 && !expanded
+      ? hiddenCount + " ajan gizli."
+      : "";
+
+    var rows = (expanded ? agents : agents.slice(0, AGENTS_COLLAPSED)).map(function (agent) {
       var tr = document.createElement("tr");
       tr.appendChild(td(agent.name));
       tr.appendChild(td(agent.scope === "user" ? "kullanici" : "proje"));
@@ -1640,7 +1778,10 @@ export const DASHBOARD_JS = `
 
   function refreshUsage() {
     var model = qs("recentModelFilter").value;
-    var query = "/dashboard/api/usage?days=14&recent=20";
+    // recent, "Son istekler" tablosundaki satirlarla eslesiyor (matchUsageCosts);
+    // 20 iken 200 satirlik tablonun cogu satiri "- " kaliyordu. Ayni sayi
+    // metrics-recent ile (200) tutulur.
+    var query = "/dashboard/api/usage?days=14&recent=200";
     if (model) query += "&model=" + encodeURIComponent(model);
     get(query).then(renderUsage).catch(function () {});
   }
@@ -2132,6 +2273,11 @@ export const DASHBOARD_JS = `
     qs("newAgentBtn").addEventListener("click", function () {
       qs("agentFormPanel").classList.remove("hidden");
       qs("aName").focus();
+    });
+
+    qs("agentsMoreBtn").addEventListener("click", function () {
+      agentsExpanded = !agentsExpanded;
+      if (currentAgents) renderAgents(currentAgents);
     });
 
     qs("agentFormCancel").addEventListener("click", function () { hideAgentForm(); });

@@ -60,6 +60,12 @@ export interface ModelEntry {
   description?: string;
   /** Real context window, used for CLAUDE_CODE_MAX_CONTEXT_TOKENS. */
   contextTokens?: number;
+  /**
+   * Request parameters the model accepts (OpenRouter `supported_parameters`,
+   * e.g. reasoning, tools, response_format). Refreshed from the catalog, never
+   * hand-edited; informational, cor does not strip anything based on it.
+   */
+  supportedParameters?: string[];
   /** Cap for max_tokens, in case Claude Code asks for more than the model allows. */
   maxOutputTokens?: number;
   /**
@@ -542,6 +548,31 @@ export function resolveOpenRouterKey(config: Config): string | undefined {
 
 export function findModel(config: Config, modelId: string): ModelEntry | undefined {
   return config.models.find((m) => m.id === modelId);
+}
+
+/**
+ * True for OpenRouter's account-wide `:free` tier, which shares one daily and
+ * one per-minute quota across every model on it. wasFree is set going forward
+ * (see modelOps.autofillFromCatalog), but a model added before that existed
+ * has no such flag; the ":free" suffix is OpenRouter's own convention and
+ * catches those too. A model with neither (e.g. a stealth model that happens
+ * to be free right now, like stealth/space-bunny-alpha) is not on this tier.
+ */
+export function isFreeTierModelId(config: Config, modelId: string): boolean {
+  return Boolean(findModel(config, modelId)?.wasFree) || modelId.endsWith(":free");
+}
+
+/**
+ * True for an OpenRouter stealth/promo model (e.g. stealth/space-bunny-alpha,
+ * the "bunny" agents' model) — free while the promotion lasts, but unlimited
+ * and not on the shared `:free`-tier quota. `stealth/` is OpenRouter's own
+ * naming convention for these, so this also catches whichever one replaces
+ * the current promo. Requests to it are excluded from the daily usage
+ * dashboard by default: they're free and constant, so counting them there
+ * would drown out the numbers that actually matter for budget/quota tracking.
+ */
+export function isStealthPromoModelId(modelId: string): boolean {
+  return modelId.startsWith("stealth/");
 }
 
 /**

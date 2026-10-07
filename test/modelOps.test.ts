@@ -11,6 +11,7 @@ import {
   autofillFromCatalog,
   buildModelEntry,
   checkFreeTierDrift,
+  refreshSupportedParameters,
   mergeModelEntry,
   removeModel,
   type FreeTierDrift,
@@ -586,5 +587,17 @@ describe("mergeModelEntry with priceDrift and wasFree", () => {
     const merged = mergeModelEntry(base, { wasFree: null } as any);
     expect(merged.wasFree).toBeUndefined();
     expect(merged.priceDrift).toBeDefined();
+  });
+});
+
+describe("refreshSupportedParameters", () => {
+  it("katalogdaki parametreleri modele yazar, degismediyse false doner", () => {
+    const cfg = { ...DEFAULT_CONFIG, models: [{ id: "a/b" }, { id: "yok/model" }] };
+    const catalog = [{ id: "a/b", supportedParameters: ["reasoning", "tools"] }];
+
+    expect(refreshSupportedParameters(cfg, catalog)).toBe(true);
+    expect(cfg.models[0]).toEqual({ id: "a/b", supportedParameters: ["reasoning", "tools"] });
+    expect(cfg.models[1]).toEqual({ id: "yok/model" });
+    expect(refreshSupportedParameters(cfg, catalog)).toBe(false);
   });
 });

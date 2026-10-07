@@ -413,6 +413,64 @@ describe("GET /dashboard/api/usage", () => {
     expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
     expect((body.daily as unknown[]).length).toBe(3);
   });
+
+  it("excludes stealth/promo models (bunny) from the default view", async () => {
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 0.02, stream: true },
+      {
+        ts: fakeNow,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 10,
+        completionTokens: 5,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson("/dashboard/api/usage?days=3&recent=5");
+    expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
+  });
+
+  it("still lists stealth/promo models in `recent` even though totals exclude them", async () => {
+    fakeUsage = [
+      { ts: fakeNow, model: "a", promptTokens: 10, completionTokens: 5, cost: 0.02, stream: true },
+      {
+        ts: fakeNow - 1000,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 20,
+        completionTokens: 8,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson("/dashboard/api/usage?days=3&recent=5");
+    // Toplamlar bunny saymaz...
+    expect(body).toMatchObject({ totals: { requests: 1, cost: 0.02 } });
+    // ...ama "Son istekler" tablosunda gorunur, yoksa token sutunlari "-" kalir.
+    expect((body.recent as { model: string }[]).map((r) => r.model).sort()).toEqual([
+      "a",
+      "stealth/space-bunny-alpha",
+    ]);
+  });
+
+  it("still shows a stealth/promo model when it is explicitly requested", async () => {
+    fakeUsage = [
+      {
+        ts: fakeNow,
+        model: "stealth/space-bunny-alpha",
+        promptTokens: 10,
+        completionTokens: 5,
+        cost: 0,
+        stream: true,
+      },
+    ];
+
+    const { body } = await getJson(
+      "/dashboard/api/usage?days=3&recent=5&model=stealth/space-bunny-alpha",
+    );
+    expect(body).toMatchObject({ totals: { requests: 1 } });
+  });
 });
 
 describe("GET /dashboard/api/metrics-summary", () => {
@@ -555,6 +613,7 @@ describe("GET /dashboard/api/health", () => {
     expect(checks.map((check) => check.id).sort()).toEqual([
       "credit",
       "free_quota",
+      "free_quota_count",
       "key",
       "model_config",
       "models",

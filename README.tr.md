@@ -1,6 +1,14 @@
 # claude-openrouter (`cor`)
 
+![cor dashboard](docs/screenshots/dashboard.jpg)
+
 *[English](README.md)*
+
+## Açıklama
+
+`cor`, Claude Code ile iki upstream arasında duran yerel bir Node.js proxy'si ve **hiçbir çalışma zamanı bağımlılığı yok** — `package.json` içinde `dependencies` alanı hiç yok, yalnızca TypeScript derlemesi (tsup) ve testler (vitest) için geliştirme araçları var. `ANTHROPIC_BASE_URL` ona yönlendirilince istekler modele göre ikiye ayrılıyor: `claude-*` id'leri mevcut kimlik bilginle bayt bayt `api.anthropic.com`'a aktarılıyor, gerisi Anthropic Messages API ile OpenRouter'ın chat completions arasında çevriliyor. CLI; model ekleme ve ayarlama, Claude Code menüsüne yazma, alt ajan üretimi ve uçtan uca çalışan `cor doctor` kontrolünü kapsıyor. `cor dashboard` kendi kendine yeten tek sayfalık bir arayüz sunuyor — CSS ve JS string modülü olarak gömülü, CDN ve derleme adımı yok — kredi ve harcama, model bazlı döküm ve gecikme grafikleri, sağlık kontrolleri, model ve alt ajan yönetimi, harcama tavanı, alarm webhook'ları ve modelleri yan yana karşılaştırma içeriyor. Her istek `~/.claude-openrouter/usage.jsonl`'ye ve `/metrics` ucundaki Prometheus metriklerine yazılıyor, yani maliyet tahmin edilmiyor, kayıttan okunuyor.
+
+---
 
 Claude Code'a **hiç dokunmadan**, OpenRouter üzerindeki istediğin modelleri `/model` menüsüne ekler.
 

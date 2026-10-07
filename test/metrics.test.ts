@@ -342,13 +342,15 @@ describe("recentErrors", () => {
 });
 
 describe("timeline", () => {
-  const HOUR_START = Math.floor(new Date("2026-09-26T12:00:00Z").getTime() / HOUR_MS) * HOUR_MS;
+  // buildTimeline() drops anything older than 24h off Date.now(), so the clock
+  // is pinned here for the same reason as in errorRate1h below: a hardcoded
+  // instant drifts out of the window once real time passes it by a day.
+  const NOW = new Date("2026-09-26T12:00:00Z").getTime();
+  const HOUR_START = Math.floor(NOW / HOUR_MS) * HOUR_MS;
 
-  // buildTimeline() cuts off at Date.now() - 24h, so the clock is pinned next
-  // to the fixtures; otherwise these break a day after the dates were written.
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(HOUR_START + 30 * 60_000);
+    vi.setSystemTime(NOW);
   });
 
   afterEach(() => {

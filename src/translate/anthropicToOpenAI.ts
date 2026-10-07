@@ -82,6 +82,7 @@ export function anthropicToOpenAI(
     if (choice) out.tool_choice = choice;
   }
 
+  dropUnsupported(out, entry.supportedParameters);
   return out;
 }
 
@@ -132,6 +133,27 @@ function isPortablePattern(pattern: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Removes request fields the model's catalog entry does not list, so the
+ * provider never sees a parameter it would reject or ignore. No list (a model
+ * OpenRouter does not catalog) means nothing is removed.
+ */
+function dropUnsupported(out: OpenAIRequest, supported: string[] | undefined): void {
+  if (!supported?.length) return;
+  const has = (name: string) => supported.includes(name);
+  if (!has("max_tokens")) delete out.max_tokens;
+  if (!has("temperature")) delete out.temperature;
+  if (!has("top_p")) delete out.top_p;
+  if (!has("stop")) delete out.stop;
+  if (!has("tools")) {
+    delete out.tools;
+    delete out.tool_choice;
+  } else if (!has("tool_choice")) {
+    delete out.tool_choice;
+  }
+  if (!has("reasoning") && !has("reasoning_effort")) delete out.reasoning;
 }
 
 function clampMaxTokens(
