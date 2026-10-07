@@ -173,6 +173,16 @@ describe("mergeModelEntry", () => {
     expect(merged.label).toBe("X");
   });
 
+  it("sets and clears nativeMessages", () => {
+    const native = mergeModelEntry(base, { nativeMessages: true });
+    expect(native.nativeMessages).toBe(true);
+    expect(mergeModelEntry(native, { nativeMessages: false }).nativeMessages).toBeUndefined();
+    expect(mergeModelEntry(native, { nativeMessages: null }).nativeMessages).toBeUndefined();
+    expect(mergeModelEntry(native, {}).nativeMessages).toBe(true);
+    expect(buildModelEntry("thinkingmachines/inkling:free", { nativeMessages: true }).nativeMessages).toBe(true);
+    expect(buildModelEntry("openai/gpt-5").nativeMessages).toBeUndefined();
+  });
+
   it("rejects an invalid reasoning value in a patch", () => {
     expect(() => mergeModelEntry(base, { reasoning: "ultra" })).toThrow(ModelOpError);
   });

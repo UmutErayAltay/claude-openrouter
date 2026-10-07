@@ -8,6 +8,7 @@ import type { AnthropicRequest } from "../translate/types.js";
 import { routeFor } from "../router.js";
 import { passthroughToAnthropic } from "./anthropicPassthrough.js";
 import { handleOpenRouter } from "./openrouterHandler.js";
+import { handleOpenRouterNative } from "./openrouterNative.js";
 import { forwardableHeaders, readBody, sendJson } from "./http.js";
 import { recordUsage as recordUsageToLog, readUsage as readUsageToLog, type UsageRecord } from "../usageLog.js";
 import { recordRequest, recordUsageMetrics, renderMetrics, getMetricsSummary } from "../metrics.js";
@@ -211,19 +212,23 @@ async function handle(req: IncomingMessage, res: ServerResponse, context: Handle
     return;
   }
 
-  log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}`);
+  const native = route.entry.nativeMessages === true;
+  log(`openrouter -> ${route.entry.id}${request.stream ? " (stream)" : ""}${native ? " (native)" : ""}`);
   const startedAt = Date.now();
   // The proxy only learns why a request failed once it's already been answered,
   // so the handler reports the text it sent and it lands in the recent-errors list.
   let errorMessage: string | undefined;
-  const outcome = await handleOpenRouter(config, route.entry, request, res, {
+  const handlerOptions = {
     log,
     markNonStreaming,
     recordUsage,
-    onError: (message) => {
+    onError: (message: string) => {
       errorMessage = message;
     },
-  });
+  };
+  const outcome = native
+    ? await handleOpenRouterNative(config, route.entry, req, body, res, handlerOptions)
+    : await handleOpenRouter(config, route.entry, request, res, handlerOptions);
   recordRequest({
     model: route.entry.id,
     outcome,

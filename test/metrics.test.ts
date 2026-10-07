@@ -344,6 +344,17 @@ describe("recentErrors", () => {
 describe("timeline", () => {
   const HOUR_START = Math.floor(new Date("2026-09-26T12:00:00Z").getTime() / HOUR_MS) * HOUR_MS;
 
+  // buildTimeline() cuts off at Date.now() - 24h, so the clock is pinned next
+  // to the fixtures; otherwise these break a day after the dates were written.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(HOUR_START + 30 * 60_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("buckets by model and hour, counting requests and failures", () => {
     recordRequest({ model: "x", outcome: "ok", durationSeconds: 1, ts: HOUR_START + 10_000 });
     recordRequest({ model: "x", outcome: "upstream_error", durationSeconds: 1, ts: HOUR_START + 20_000 });

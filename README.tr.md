@@ -123,6 +123,7 @@ Bir şey ters giderse: `cor doctor` her adımı tek tek kontrol eder, `~/.claude
 | `--quantizations <liste>` | Kabul edilen kuantizasyonlar, virgülle: `fp8,bf16,fp16` |
 | `--behaves-as <claude-id>` | Claude Code'un "tanımadığım model" uyarısını susturur |
 | `--no-stream` / `--stream` | OpenRouter'a akışsız sor / akışı açık tut |
+| `--native` | İsteği çevirmeden OpenRouter'ın Anthropic uç noktasına gönder (aşağıya bak) |
 
 ---
 
@@ -242,6 +243,18 @@ Claude Code bunu sıradan bir cevap sanır, hiçbir tool çalışmaz, model bozu
 İlk tur dahil hiçbir tur kaybedilmez. Ne olduğunu `~/.claude-openrouter/proxy.log` yazar. Elle kapatmak/açmak için `--no-stream` / `--stream`.
 
 Hem Qwen/Hermes XML biçimi hem `<tool_call>{"name":...,"arguments":{...}}</tool_call>` JSON biçimi tanınır.
+
+---
+
+## Yalnız ajan araçlarına açık ücretsiz modeller (`--native`)
+
+Bazı ücretsiz OpenRouter modelleri, örneğin `thinkingmachines/inkling:free`, yalnız OpenRouter'ın tanıdığı ajan araçlarına sunulur, gerisine `403 only available on agentic harnesses` döner. Çeviri yolu cor'un kendi başlıklarını gönderdiği için asıl istemci Claude Code olsa da reddedilir.
+
+```bash
+cor add thinkingmachines/inkling:free --native --context 1048576
+```
+
+`--native` ile proxy çeviri yapmaz: Claude Code'un isteği OpenRouter'ın Anthropic uyumlu `/messages` uç noktasına olduğu gibi, Claude Code'un kendi başlıklarıyla gider; yalnız kimlik bilgisi OpenRouter anahtarıyla değiştirilir. Bu, `ANTHROPIC_BASE_URL` OpenRouter'a çevrildiğinde Claude Code'un yapacağı isteğin aynısıdır. Kota yedeği, bütçe ve fiyat değişimi korumaları, kullanım kaydı ve metrikler aynen çalışır. Proxy'yi doğrudan çağıran başka istemciler (betikler, Python araçları) kendi başlıklarıyla gittiği için bu modeller onları reddeder; onlar için normal bir model seç.
 
 ---
 

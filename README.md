@@ -123,6 +123,7 @@ If something goes wrong: `cor doctor` checks every step one by one, and `~/.clau
 | `--quantizations <list>` | Accepted quantizations, comma-separated: `fp8,bf16,fp16` |
 | `--behaves-as <claude-id>` | Silences Claude Code's "unrecognized model" warning |
 | `--no-stream` / `--stream` | Query OpenRouter without streaming / keep streaming on |
+| `--native` | Send the request untranslated to OpenRouter's Anthropic endpoint (see below) |
 
 ---
 
@@ -242,6 +243,18 @@ Claude Code treats this as an ordinary reply, no tool runs, and the model looks 
 No turn is lost, including the first one. What happened is written to `~/.claude-openrouter/proxy.log`. Toggle it manually with `--no-stream` / `--stream`.
 
 Both the Qwen/Hermes XML format and the `<tool_call>{"name":...,"arguments":{...}}</tool_call>` JSON format are recognized.
+
+---
+
+## Harness-only free models (`--native`)
+
+Some free OpenRouter models, such as `thinkingmachines/inkling:free`, are served only to agentic harnesses OpenRouter recognizes and answer anything else with `403 only available on agentic harnesses`. The translated path sends cor's own attribution headers, so it is refused even when Claude Code is the real client.
+
+```bash
+cor add thinkingmachines/inkling:free --native --context 1048576
+```
+
+With `--native` the proxy does not translate: Claude Code's request goes to OpenRouter's Anthropic-compatible `/messages` endpoint as is, with Claude Code's own headers; only the credential is swapped for the OpenRouter key. It is the same request Claude Code makes with `ANTHROPIC_BASE_URL` pointed at OpenRouter. Quota fallback, budget and price-drift guards, usage logging and metrics still apply. Other clients calling the proxy directly (scripts, the Python tools) keep their own headers, so these models refuse them; pick a regular model for those.
 
 ---
 

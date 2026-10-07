@@ -16,6 +16,10 @@ Kurulum
                              tool cagrisini duz metin yaziyor; proxy bunu kendisi
                              de fark edip kalici olarak kapatir
       --stream               akisi acik tut
+      --native               Istegi cevirmeden OpenRouter'in Anthropic uc noktasina
+                             (/messages) Claude Code'un kendi basliklariyla gonder.
+                             Yalniz taninan ajan araclarina acik ucretsiz modeller
+                             (ornek: thinkingmachines/inkling:free) icin gerekir
       --reasoning <seviye>   OpenRouter reasoning effort: none, low, medium, high, max.
                              Ayarlanmazsa saglayicinin varsayilani gecerli olur;
                              fark buyuk olabilir
