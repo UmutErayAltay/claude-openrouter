@@ -101,6 +101,7 @@ async function commandAdd(args: string[]): Promise<number> {
       "behaves-as": { type: "string" },
       "no-stream": { type: "boolean" },
       stream: { type: "boolean" },
+      native: { type: "boolean" },
       reasoning: { type: "string" },
       cheapest: { type: "boolean" },
       sort: { type: "string" },
@@ -123,6 +124,7 @@ async function commandAdd(args: string[]): Promise<number> {
     maxOutputTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined,
     behavesAs: values["behaves-as"],
     stream: values["no-stream"] ? false : values.stream ? true : undefined,
+    nativeMessages: values.native ? true : undefined,
     reasoning: values.reasoning,
     providerSort: values.cheapest ? "price" : values.sort,
     maxPrice:

@@ -95,6 +95,13 @@ export interface ModelEntry {
    */
   stream?: boolean;
   /**
+   * true sends Claude Code's request to OpenRouter's Anthropic-compatible
+   * /messages endpoint untranslated, with Claude Code's own headers (only the
+   * credential is swapped). Some free models, such as Inkling, are served only
+   * to agentic harnesses OpenRouter recognizes and refuse the translated path.
+   */
+  nativeMessages?: boolean;
+  /**
    * Optional Claude model id to borrow capabilities from, written to the
    * picker row. It silences Claude Code's "not in this version's model
    * catalog" warning; the proxy strips the Anthropic-only fields it unlocks.

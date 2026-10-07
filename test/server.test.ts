@@ -870,3 +870,177 @@ describe("estimateInputTokens", () => {
     expect(estimate).toBe(20);
   });
 });
+
+describe("nativeMessages (untranslated Anthropic relay to OpenRouter)", () => {
+  const NATIVE_ID = "thinkingmachines/inkling:free";
+  const nativeConfig = () => ({
+    ...DEFAULT_CONFIG,
+    openrouterApiKey: "sk-or-test",
+    openrouterBaseUrl: `${upstreamUrl}/api/v1`,
+    anthropicBaseUrl: upstreamUrl,
+    models: [{ id: NATIVE_ID, label: "Inkling", nativeMessages: true }],
+  });
+  let usage: Record<string, unknown>[] = [];
+
+  async function withNativeProxy<T>(run: (url: string) => Promise<T>): Promise<T> {
+    resetMetrics();
+    resetFreeQuotaGuard();
+    usage = [];
+    captured = [];
+    const server = createProxyServer({
+      loadConfig: nativeConfig,
+      recordUsage: (entry) => {
+        usage.push(entry);
+      },
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      return await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      resetFreeQuotaGuard();
+    }
+  }
+
+  // Fields the translated path drops; the native path must pass them through.
+  const claudeCodeBody = {
+    model: NATIVE_ID,
+    max_tokens: 32000,
+    thinking: { type: "adaptive" },
+    context_management: { edits: [{ type: "clear_thinking_20251015", keep: "all" }] },
+    messages: [{ role: "user", content: "7*6?" }],
+  };
+  const claudeCodeHeaders = {
+    "content-type": "application/json",
+    "user-agent": "claude-cli/2.1.292 (external, cli)",
+    "x-app": "cli",
+    "anthropic-beta": "context-management-2025-06-27",
+    "anthropic-version": "2023-06-01",
+    "x-api-key": "sk-ant-should-not-leak",
+  };
+
+  it("relays the body untranslated with Claude Code's headers and only the credential swapped", async () => {
+    respond = jsonUpstream({
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "42" }],
+      usage: { input_tokens: 10, output_tokens: 3, cache_read_input_tokens: 4, cost: 0 },
+    });
+
+    const response = await withNativeProxy((url) =>
+      fetch(`${url}/v1/messages?beta=true`, {
+        method: "POST",
+        headers: claudeCodeHeaders,
+        body: JSON.stringify(claudeCodeBody),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { content: { text: string }[] }).content[0]?.text).toBe("42");
+    expect(captured).toHaveLength(1);
+    const sent = captured[0]!;
+    expect(sent.path).toBe("/api/v1/messages?beta=true");
+    expect(sent.body).toEqual(claudeCodeBody);
+    expect(sent.headers.authorization).toBe("Bearer sk-or-test");
+    expect(sent.headers["x-api-key"]).toBeUndefined();
+    expect(sent.headers["user-agent"]).toBe("claude-cli/2.1.292 (external, cli)");
+    expect(sent.headers["x-app"]).toBe("cli");
+    expect(sent.headers["anthropic-beta"]).toBe("context-management-2025-06-27");
+    // The translated path's own attribution headers must not replace Claude Code's.
+    expect(sent.headers["x-title"]).toBeUndefined();
+    expect(usage).toEqual([
+      {
+        model: NATIVE_ID,
+        promptTokens: 14,
+        completionTokens: 3,
+        reasoningTokens: undefined,
+        cachedTokens: 4,
+        cost: 0,
+        stream: false,
+      },
+    ]);
+  });
+
+  it("streams the events through unchanged and records the final usage", async () => {
+    const events =
+      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}\n\n' +
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"42"}}\n\n' +
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":113,"output_tokens":43,"output_tokens_details":{"thinking_tokens":34},"cache_read_input_tokens":0,"cost":0}}\n\n' +
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+    respond = () => ({ status: 200, headers: { "content-type": "text/event-stream" }, body: events });
+
+    const text = await withNativeProxy(async (url) => {
+      const response = await fetch(`${url}/v1/messages`, {
+        method: "POST",
+        headers: claudeCodeHeaders,
+        body: JSON.stringify({ ...claudeCodeBody, stream: true }),
+      });
+      return response.text();
+    });
+
+    expect(text).toBe(events);
+    expect(usage).toEqual([
+      {
+        model: NATIVE_ID,
+        promptTokens: 113,
+        completionTokens: 43,
+        reasoningTokens: 34,
+        cachedTokens: 0,
+        cost: 0,
+        stream: true,
+      },
+    ]);
+  });
+
+  it("passes an upstream error through and marks the daily free quota", async () => {
+    const error = {
+      type: "error",
+      error: { type: "rate_limit_error", message: "Rate limit exceeded: free-models-per-day" },
+    };
+    respond = jsonUpstream(error, 429);
+
+    const response = await withNativeProxy(async (url) => {
+      const answer = await fetch(`${url}/v1/messages`, {
+        method: "POST",
+        headers: claudeCodeHeaders,
+        body: JSON.stringify(claudeCodeBody),
+      });
+      expect(isFreeQuotaExhausted()).toBe(true);
+      return answer;
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual(error);
+    expect(usage).toEqual([]);
+  });
+});
+
+describe("nativeMessages without a key", () => {
+  it("answers 401 without calling upstream", async () => {
+    resetMetrics();
+    const server = createProxyServer({
+      loadConfig: () => ({
+        ...DEFAULT_CONFIG,
+        openrouterBaseUrl: `${upstreamUrl}/api/v1`,
+        anthropicBaseUrl: upstreamUrl,
+        models: [{ id: "thinkingmachines/inkling:free", nativeMessages: true }],
+      }),
+      recordUsage: () => {},
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    captured = [];
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "thinkingmachines/inkling:free",
+        max_tokens: 10,
+        messages: [{ role: "user", content: "x" }],
+      }),
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    expect(response.status).toBe(401);
+    expect(captured).toEqual([]);
+  });
+});

@@ -532,6 +532,22 @@ describe("model management", () => {
     const { status } = await postJson("/dashboard/api/models/update", { id: "missing", patch: {} });
     expect(status).toBe(400);
   });
+
+  it("adds and updates nativeMessages and removes it when set to null", async () => {
+    const add = await postJson("/dashboard/api/models/add", {
+      id: "thinkingmachines/inkling:free",
+      nativeMessages: true,
+    });
+    expect(add.status).toBe(200);
+    expect(add.body.model).toMatchObject({ id: "thinkingmachines/inkling:free", nativeMessages: true });
+
+    const updated = await postJson("/dashboard/api/models/update", {
+      id: "thinkingmachines/inkling:free",
+      patch: { nativeMessages: null },
+    });
+    expect(updated.status).toBe(200);
+    expect("nativeMessages" in (updated.body.model as ModelEntry)).toBe(false);
+  });
 });
 
 describe("POST /dashboard/api/sync", () => {

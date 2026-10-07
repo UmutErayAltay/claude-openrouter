@@ -1120,6 +1120,7 @@ export const DASHBOARD_JS = `
     qs("fReasoning").value = model.reasoning || "";
     qs("fSort").value = model.providerSort || "";
     qs("fStream").value = model.stream === false ? "false" : model.stream === true ? "true" : "";
+    qs("fNative").value = model.nativeMessages === true ? "true" : "";
     qs("fQuantizations").value = (model.quantizations || []).join(",");
     qs("fMaxPriceIn").value = (model.maxPrice && model.maxPrice.prompt) || "";
     qs("fMaxPriceOut").value = (model.maxPrice && model.maxPrice.completion) || "";
@@ -1148,6 +1149,7 @@ export const DASHBOARD_JS = `
       reasoning: qs("fReasoning").value || null,
       providerSort: qs("fSort").value || null,
       stream: streamValue === "true" ? true : streamValue === "false" ? false : null,
+      nativeMessages: qs("fNative").value === "true" ? true : null,
       quantizations: quantValue
         ? quantValue.split(",").map(function (q) { return q.trim(); }).filter(Boolean)
         : null,
@@ -1259,6 +1261,14 @@ export const DASHBOARD_JS = `
       tr.appendChild(td(m.reasoning || "-"));
       tr.appendChild(td(m.providerSort || "-"));
 
+      var nativeCell = document.createElement("td");
+      var nativeBadge = document.createElement("span");
+      nativeBadge.className = "badge" + (m.nativeMessages === true ? " on" : "");
+      nativeBadge.textContent = m.nativeMessages === true ? "native" : "ceviri";
+      if (m.nativeMessages === true) nativeBadge.title = "Istek cevrilmeden OpenRouter /messages ucuna Claude Code basliklariyla gider";
+      nativeCell.appendChild(nativeBadge);
+      tr.appendChild(nativeCell);
+
       var streamCell = document.createElement("td");
       var badge = document.createElement("span");
       badge.className = "badge " + (m.stream === false ? "off" : "on");
@@ -1287,6 +1297,10 @@ export const DASHBOARD_JS = `
       testBtn.type = "button";
       testBtn.className = "btn btn-secondary btn-small";
       testBtn.textContent = "Test et";
+      if (m.nativeMessages === true) {
+        testBtn.disabled = true;
+        testBtn.title = "Native modeller yalniz Claude Code isteginde calisir; panelden test edilemez.";
+      }
       testBtn.addEventListener("click", function () { runModelTest(m.id, testBtn, resultBox); });
 
       var providersBtn = document.createElement("button");
@@ -1313,7 +1327,7 @@ export const DASHBOARD_JS = `
 
       return tr;
     });
-    setRows("modelsBody", rows, 5, "Hic model ekli degil.");
+    setRows("modelsBody", rows, 6, "Hic model ekli degil.");
     populateAgentModelSelect(models);
     populateRecentModelFilter(models);
     renderCompareModels(models);
@@ -1524,7 +1538,7 @@ export const DASHBOARD_JS = `
         var row = document.createElement("tr");
         row.className = "providers-row";
         var cell = document.createElement("td");
-        cell.colSpan = 5;
+        cell.colSpan = 6;
         if (!providers.length) {
           cell.textContent = "Saglayici bilgisi yok.";
         } else {

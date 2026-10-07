@@ -25,6 +25,7 @@ export interface ModelInput {
   maxOutputTokens?: number | null;
   behavesAs?: string | null;
   stream?: boolean | null;
+  nativeMessages?: boolean | null;
   reasoning?: string | null;
   providerSort?: string | null;
   maxPrice?: { prompt?: number; completion?: number } | null;
@@ -155,6 +156,7 @@ export function buildModelEntry(id: string, input: ModelInput = {}): ModelEntry 
   if (typeof maxOutputTokens === "number") entry.maxOutputTokens = maxOutputTokens;
   if (input.behavesAs) entry.behavesAs = input.behavesAs;
   if (typeof input.stream === "boolean") entry.stream = input.stream;
+  if (input.nativeMessages === true) entry.nativeMessages = true;
 
   const reasoning = validateReasoning(input.reasoning);
   if (reasoning) entry.reasoning = reasoning;
@@ -215,6 +217,9 @@ export function mergeModelEntry(existing: ModelEntry, patch: ModelInput): ModelE
     const providerSort = validateSort(patch.providerSort);
     if (providerSort) merged.providerSort = providerSort;
   }
+
+  if (patch.nativeMessages === null || patch.nativeMessages === false) delete merged.nativeMessages;
+  else if (patch.nativeMessages === true) merged.nativeMessages = true;
 
   if (patch.wasFree === null) delete merged.wasFree;
   else if (patch.wasFree !== undefined) merged.wasFree = patch.wasFree;

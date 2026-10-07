@@ -69,10 +69,9 @@ export function anthropicToOpenAI(
         function: {
           name: tool.name,
           ...(tool.description ? { description: tool.description } : {}),
-          parameters: (tool.input_schema ?? { type: "object", properties: {} }) as Record<
-            string,
-            unknown
-          >,
+          parameters: sanitizeSchema(
+            tool.input_schema ?? { type: "object", properties: {} },
+          ) as Record<string, unknown>,
         },
       }));
     if (tools.length) out.tools = tools;
@@ -85,6 +84,55 @@ export function anthropicToOpenAI(
 
   dropUnsupported(out, entry.supportedParameters);
   return out;
+}
+
+/**
+ * Some upstream providers validate tool schemas with a linear-time regex
+ * engine (RE2-like) and answer the whole request with a 400 "Provider
+ * returned error" when a `pattern` doesn't compile: lookaround, backreferences
+ * or a repeat count above 1000. Such a pattern is only a validation hint for
+ * the model, so it is dropped; patterns every engine accepts stay.
+ */
+export function sanitizeSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeSchema);
+  if (!isRecord(schema)) return schema;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "pattern" && typeof value === "string" && !isPortablePattern(value)) continue;
+    if (SCHEMA_MAP_KEYS.has(key) && isRecord(value)) {
+      // `properties` maps names to schemas: a property that happens to be
+      // called "pattern" is not the keyword and must survive.
+      out[key] = Object.fromEntries(
+        Object.entries(value).map(([name, child]) => [name, sanitizeSchema(child)]),
+      );
+    } else if (LITERAL_KEYS.has(key)) {
+      out[key] = value;
+    } else {
+      out[key] = sanitizeSchema(value);
+    }
+  }
+  return out;
+}
+
+/** Keys whose value is a name → schema map. */
+const SCHEMA_MAP_KEYS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+/** Keys whose value is data, not a schema. */
+const LITERAL_KEYS = new Set(["enum", "const", "default", "examples", "required"]);
+const MAX_REPEAT = 1000;
+
+function isPortablePattern(pattern: string): boolean {
+  if (/\(\?(?:=|!|<=|<!)/.test(pattern)) return false;
+  if (/\\[1-9]|\\k</.test(pattern)) return false;
+  for (const match of pattern.matchAll(/\{(\d*)(?:,(\d*))?\}/g)) {
+    const bounds = [match[1], match[2]].map((value) => (value ? Number(value) : 0));
+    if (bounds.some((bound) => bound > MAX_REPEAT)) return false;
+  }
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

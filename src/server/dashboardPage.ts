@@ -128,10 +128,10 @@ export function buildDashboardHtml(): string {
     <table>
       <thead>
         <tr>
-          <th>Model</th><th>Reasoning</th><th>Saglayici</th><th>Akis</th><th></th>
+          <th>Model</th><th>Reasoning</th><th>Saglayici</th><th>Yol</th><th>Akis</th><th></th>
         </tr>
       </thead>
-      <tbody id="modelsBody"><tr class="empty-row"><td colspan="5">yukleniyor...</td></tr></tbody>
+      <tbody id="modelsBody"><tr class="empty-row"><td colspan="6">yukleniyor...</td></tr></tbody>
     </table>
     </div>
     <div class="sub-panel hidden" id="historyPanel">
@@ -234,6 +234,12 @@ export function buildDashboardHtml(): string {
           <option value="">(otomatik)</option>
           <option value="true">acik</option>
           <option value="false">kapali</option>
+        </select>
+      </label>
+      <label>Yol
+        <select id="fNative">
+          <option value="">ceviri (OpenAI)</option>
+          <option value="true">native (Anthropic)</option>
         </select>
       </label>
       <label>Kuantizasyonlar
