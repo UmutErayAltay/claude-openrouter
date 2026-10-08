@@ -52,9 +52,14 @@ export function anthropicToOpenAI(
   // A caller that is not Claude Code (e.g. a one-shot script that needs the whole
   // output budget for the answer) can lower the effort per request with the
   // non-standard top-level `reasoning_effort` field; Claude Code never sends it.
+  // "auto" sends no reasoning field at all, so the model decides how long to think.
   const requested = request.reasoning_effort;
   const effort =
-    typeof requested === "string" && isReasoningEffort(requested) ? requested : entry.reasoning;
+    requested === "auto"
+      ? undefined
+      : typeof requested === "string" && isReasoningEffort(requested)
+        ? requested
+        : entry.reasoning;
   if (effort) out.reasoning = { effort };
 
   // allow_fallbacks is left at its default: the cheapest provider is tried
