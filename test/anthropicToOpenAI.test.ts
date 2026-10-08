@@ -331,6 +331,22 @@ describe("anthropicToOpenAI", () => {
     expect(result.reasoning).toEqual({ effort: "max" });
   });
 
+  it("lets a request lower the configured effort with reasoning_effort", () => {
+    const result = anthropicToOpenAI(
+      build({ reasoning_effort: "low" }),
+      { id: "deepseek/x", reasoning: "max" },
+    );
+    expect(result.reasoning).toEqual({ effort: "low" });
+  });
+
+  it("ignores an invalid reasoning_effort and keeps the configured one", () => {
+    const result = anthropicToOpenAI(
+      build({ reasoning_effort: "turbo" }),
+      { id: "deepseek/x", reasoning: "max" },
+    );
+    expect(result.reasoning).toEqual({ effort: "max" });
+  });
+
   it("sends no reasoning field when none is configured", () => {
     expect(anthropicToOpenAI(build(), entry).reasoning).toBeUndefined();
   });

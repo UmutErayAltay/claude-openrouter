@@ -1,4 +1,4 @@
-import type { ModelEntry } from "../config.js";
+import { isReasoningEffort, type ModelEntry } from "../config.js";
 import type {
   AnthropicContentBlock,
   AnthropicMessage,
@@ -49,7 +49,13 @@ export function anthropicToOpenAI(
 
   // Anthropic's own thinking/effort fields are dropped above; this is the
   // OpenRouter equivalent, and it changes the model's answer quality a lot.
-  if (entry.reasoning) out.reasoning = { effort: entry.reasoning };
+  // A caller that is not Claude Code (e.g. a one-shot script that needs the whole
+  // output budget for the answer) can lower the effort per request with the
+  // non-standard top-level `reasoning_effort` field; Claude Code never sends it.
+  const requested = request.reasoning_effort;
+  const effort =
+    typeof requested === "string" && isReasoningEffort(requested) ? requested : entry.reasoning;
+  if (effort) out.reasoning = { effort };
 
   // allow_fallbacks is left at its default: the cheapest provider is tried
   // first, and a second choice steps in when it is down.
